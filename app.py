@@ -230,19 +230,19 @@ def inject_js_context_menu(gantt_area_html, empreendimento):
     # 1. Carrega o CSS
     try:
         # Usando o nome do arquivo original para garantir que o Streamlit o encontre no ambiente de execução
-        with open("circular_menu(1).css", "r") as f:
+        with open("circular_menu.css", "r") as f:
             css_content = f.read()
         st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
     except FileNotFoundError:
-        st.error("Arquivo 'circular_menu(1).css' não encontrado.")
+        st.error("Arquivo 'circular_menu.css' não encontrado.")
 
     # 2. Carrega o JavaScript
     try:
         # Usando o nome do arquivo original
-        with open("circular_menu(1).js", "r") as f:
+        with open("circular_menu.js", "r") as f:
             js_content = f.read()
     except FileNotFoundError:
-        st.error("Arquivo 'circular_menu(1).js' não encontrado.")
+        st.error("Arquivo 'circular_menu.js' não encontrado.")
         js_content = ""
 
     # 3. O HTML da área do gráfico é injetado primeiro.
@@ -417,3 +417,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
