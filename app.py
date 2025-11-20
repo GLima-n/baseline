@@ -202,26 +202,18 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto com Formulário ---
+# --- Solução Simplificada para Menu de Contexto ---
 
-def create_context_menu_with_form(selected_empreendimento):
-    """Cria menu de contexto usando formulário HTML"""
+def create_simple_context_menu(selected_empreendimento):
+    """Cria um menu de contexto simples usando apenas HTML/JS básico"""
     
-    html_code = f'''
+    html_code = f"""
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
     <div style="text-align: center;">
         <h3>Área do Gráfico de Gantt</h3>
         <p>Clique com o botão direito para abrir o menu de snapshot</p>
-        <p><small>Empreendimento: {selected_empreendimento}</small></p>
     </div>
 </div>
-
-<!-- Formulário invisível para enviar ações -->
-<form id="context-menu-form" method="get" style="display: none;">
-    <input type="hidden" name="context_action" id="context_action_input">
-    <input type="hidden" name="context_empreendimento" id="context_empreendimento_input" value="{selected_empreendimento}">
-    <input type="submit" id="context_submit">
-</form>
 
 <style>
 .context-menu {{
@@ -247,21 +239,43 @@ def create_context_menu_with_form(selected_empreendimento):
 </style>
 
 <script>
+// Variável global para armazenar a ação
+let snapshotAction = null;
+
 // Cria o menu de contexto
 const menu = document.createElement('div');
 menu.className = 'context-menu';
 menu.innerHTML = `
-    <div class="context-menu-item" onclick="handleAction('take_snapshot')">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="handleAction('restore_snapshot')">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="handleAction('delete_snapshot')">🗑️ Deletar Snapshot</div>
+    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
 `;
 document.body.appendChild(menu);
 
-function handleAction(action) {{
-    // Preenche o formulário e submete
-    document.getElementById('context_action_input').value = action;
-    document.getElementById('context_submit').click();
+// Funções do menu
+function takeSnapshot() {{
+    snapshotAction = 'take_snapshot';
     hideMenu();
+    // Usando uma abordagem simples: criar um link que atualiza a URL
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=take_snapshot&empreendimento={selected_empreendimento}`;
+    link.click();
+}}
+
+function restoreSnapshot() {{
+    snapshotAction = 'restore_snapshot';
+    hideMenu();
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=restore_snapshot&empreendimento={selected_empreendimento}`;
+    link.click();
+}}
+
+function deleteSnapshot() {{
+    snapshotAction = 'delete_snapshot';
+    hideMenu();
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=delete_snapshot&empreendimento={selected_empreendimento}`;
+    link.click();
 }}
 
 function showMenu(x, y) {{
@@ -293,20 +307,20 @@ document.addEventListener('keydown', function(e) {{
     }}
 }});
 </script>
-'''
+"""
     return html_code
 
-# --- Processamento de Ações do Menu ---
+# --- Função para processar ações do menu ---
 
-def process_context_menu_actions():
+def process_snapshot_actions():
     """Processa ações do menu de contexto via query parameters"""
     query_params = st.query_params
     
-    action = query_params.get('context_action')
-    empreendimento = query_params.get('context_empreendimento')
+    action = query_params.get('snapshot_action')
+    empreendimento = query_params.get('empreendimento')
     
     if action and empreendimento:
-        # Limpa os parâmetros imediatamente para evitar loop
+        # Limpa os parâmetros imediatamente
         st.query_params.clear()
         
         df = create_mock_dataframe()
@@ -315,14 +329,63 @@ def process_context_menu_actions():
             try:
                 version_name = take_snapshot(df, empreendimento)
                 st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                # Força um rerun para atualizar a interface
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro ao criar snapshot: {e}")
         elif action == 'restore_snapshot':
             st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
         elif action == 'delete_snapshot':
-            st.warning("🗑️ Use a sidebar para deletar snapshots específicos")
+            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+
+# --- Visualização de Comparação de Período ---
+
+def display_period_comparison(df_filtered, empreendimento_snapshots):
+    st.subheader(f"⏳ Comparação de Período - {df_filtered['Empreendimento'].iloc[0]}")
+    
+    version_options = ["P0 (Planejamento Original)"]
+    version_options.extend(sorted(empreendimento_snapshots.keys()))
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        version_a = st.selectbox("Linha de Base A", version_options, index=0, key="version_a")
+    with col2:
+        default_index_b = 1 if len(version_options) > 1 else 0
+        version_b = st.selectbox("Linha de Base B", version_options, index=default_index_b, key="version_b")
+        
+    if version_a == version_b:
+        st.warning("Selecione duas linhas de base diferentes")
+        return
+
+    def load_version_data(version_name):
+        if version_name == "P0 (Planejamento Original)":
+            df_version = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim']].copy()
+            df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
+        else:
+            version_data_list = empreendimento_snapshots[version_name]['data']
+            df_version = pd.DataFrame(version_data_list)
+            version_prefix = version_name.split('-')[0]
+            col_inicio = f'{version_prefix}_Previsto_Inicio'
+            col_fim = f'{version_prefix}_Previsto_Fim'
+            df_version = df_version.rename(columns={col_inicio: 'Inicio', col_fim: 'Fim'})
+            
+        df_version['Inicio'] = pd.to_datetime(df_version['Inicio'])
+        df_version['Fim'] = pd.to_datetime(df_version['Fim'])
+        return df_version[['ID_Tarefa', 'Inicio', 'Fim']]
+
+    df_a = load_version_data(version_a)
+    df_b = load_version_data(version_b)
+    df_merged = df_a.merge(df_b, on='ID_Tarefa', suffixes=('_A', '_B'))
+    
+    df_merged['Duracao_A'] = (df_merged['Fim_A'] - df_merged['Inicio_A']).dt.days
+    df_merged['Duracao_B'] = (df_merged['Fim_B'] - df_merged['Inicio_B']).dt.days
+    df_merged['Diferenca_Duracao'] = df_merged['Duracao_B'] - df_merged['Duracao_A']
+    df_merged['Desvio_Inicio'] = (df_merged['Inicio_B'] - df_merged['Inicio_A']).dt.days
+    df_merged['Desvio_Fim'] = (df_merged['Fim_B'] - df_merged['Fim_A']).dt.days
+    
+    df_context = df_filtered[['ID_Tarefa', 'Tarefa']].drop_duplicates()
+    df_final = df_context.merge(df_merged, on='ID_Tarefa')
+    
+    st.dataframe(df_final, use_container_width=True)
 
 # --- Aplicação Principal ---
 
@@ -333,156 +396,81 @@ def main():
     # Inicialização
     create_snapshots_table()
     
-    # Processa ações do menu de contexto PRIMEIRO
-    process_context_menu_actions()
+    # Processa ações do menu primeiro
+    process_snapshot_actions()
     
-    # Inicializa dados se necessário
+    # Dados
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
     
-    # Carrega dados
     df = st.session_state.df
     snapshots = load_snapshots()
     
     # Sidebar
-    with st.sidebar:
-        st.header("🎯 Controles")
-        
-        empreendimentos = df['Empreendimento'].unique().tolist()
-        selected_empreendimento = st.selectbox("🏢 Empreendimento", empreendimentos)
-        df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
-        
-        st.markdown("---")
-        st.subheader("📸 Ações Rápidas")
-        
-        # Botão para criar snapshot
-        if st.button("📸 Criar Novo Snapshot", use_container_width=True, type="primary"):
-            try:
-                version_name = take_snapshot(df, selected_empreendimento)
-                st.success(f"✅ {version_name} criado!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro: {e}")
-        
-        # Seletor de versão
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        version_options = ["Real Atual (Comparar com P0)"]
-        version_options.extend(sorted(empreendimento_snapshots.keys()))
-        
-        selected_version = st.selectbox(
-            "🔄 Versão para Comparação",
-            version_options,
-            index=0
-        )
-        
-        st.markdown("---")
-        st.subheader("💾 Snapshots Salvos")
-        
-        # Lista de snapshots com opção de deletar
-        if empreendimento_snapshots:
-            for version_name in sorted(empreendimento_snapshots.keys()):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"**{version_name}**")
-                    st.caption(f"Criado em: {empreendimento_snapshots[version_name]['date']}")
-                with col2:
-                    if st.button("🗑️", key=f"del_{version_name}"):
-                        if delete_snapshot(selected_empreendimento, version_name):
-                            st.success(f"✅ {version_name} deletado!")
-                            st.rerun()
-        else:
-            st.info("ℹ️ Nenhum snapshot salvo")
-            
-        st.markdown("---")
-        st.subheader("📥 Exportar")
-        
-        # Botão de exportação
-        txt_content = f"Relatório de Snapshots\nEmpreendimento: {selected_empreendimento}\nData: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-        
-        if empreendimento_snapshots:
-            for version, data in empreendimento_snapshots.items():
-                txt_content += f"--- {version} ---\n"
-                df_version = pd.DataFrame(data['data'])
-                txt_content += df_version.to_string(index=False) + "\n\n"
-        else:
-            txt_content += "Nenhum snapshot salvo."
-        
-        st.download_button(
-            label="💾 Baixar Relatório",
-            data=txt_content,
-            file_name=f"snapshots_{selected_empreendimento}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-
-    # Layout principal
+    empreendimentos = df['Empreendimento'].unique().tolist()
+    selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
+    df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
+    
+    # Botões de ação na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📸 Ações Rápidas")
+    
+    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True):
+        try:
+            version_name = take_snapshot(df, selected_empreendimento)
+            st.success(f"✅ {version_name} criado!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro: {e}")
+    
+    if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
+        st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
+        st.rerun()
+    
+    # Visualização principal
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        # Dados do projeto
-        st.subheader("📊 Dados do Projeto")
-        
-        # Aplica a versão selecionada para visualização
-        df_display = df_filtered.copy()
-        
-        if selected_version != "Real Atual (Comparar com P0)":
-            # Aplica dados do snapshot selecionado
-            version_data_list = empreendimento_snapshots[selected_version]['data']
-            version_data = pd.DataFrame(version_data_list)
-            
-            version_prefix = selected_version.split('-')[0]
-            col_inicio = f'{version_prefix}_Previsto_Inicio'
-            col_fim = f'{version_prefix}_Previsto_Fim'
-            
-            # Merge com dados do snapshot
-            df_display = df_display.merge(
-                version_data[['ID_Tarefa', col_inicio, col_fim]],
-                on='ID_Tarefa',
-                how='left'
-            )
-            
-            # Atualiza as colunas de previsão
-            df_display['Previsto_Inicio'] = pd.to_datetime(df_display[col_inicio])
-            df_display['Previsto_Fim'] = pd.to_datetime(df_display[col_fim])
-        
-        # Formata para exibição
-        df_display_formatted = df_display[['Tarefa', 'Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']].copy()
-        for col in ['Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']:
-            if pd.api.types.is_datetime64_any_dtype(df_display_formatted[col]):
-                df_display_formatted[col] = df_display_formatted[col].dt.strftime('%Y-%m-%d')
-        
-        st.dataframe(df_display_formatted, use_container_width=True)
-        
-        # Informação da versão
-        if selected_version == "Real Atual (Comparar com P0)":
-            st.info("📊 Comparando **Real Atual** com **P0 (Planejamento Original)**")
-        else:
-            st.info(f"📊 Comparando **Real Atual** com **{selected_version}**")
-        
-        # Menu de contexto
-        st.markdown("---")
-        st.subheader("🎯 Menu de Contexto")
-        st.markdown("**Clique com o botão direito na área abaixo:**")
-        
-        # Componente do menu de contexto com formulário
-        context_menu_html = create_context_menu_with_form(selected_empreendimento)
-        html(context_menu_html, height=350)
+        st.subheader("Dados do Projeto")
+        st.dataframe(df_filtered, use_container_width=True)
     
     with col2:
-        # Estatísticas e informações
-        st.subheader("📈 Estatísticas")
-        
-        st.metric("Total de Tarefas", len(df_filtered))
-        st.metric("Snapshots Salvos", len(empreendimento_snapshots))
-        
-        # Próximas ações sugeridas
-        st.markdown("---")
-        st.subheader("💡 Sugestões")
-        
-        if len(empreendimento_snapshots) == 0:
-            st.info("Crie seu primeiro snapshot para começar a comparar versões!")
+        st.subheader("Snapshots")
+        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+        if empreendimento_snapshots:
+            for version in sorted(empreendimento_snapshots.keys()):
+                st.write(f"• {version}")
         else:
-            st.success(f"Você tem {len(empreendimento_snapshots)} snapshot(s) para comparar")
+            st.info("Nenhum snapshot")
+    
+    # Menu de contexto
+    st.markdown("---")
+    st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    context_menu_html = create_simple_context_menu(selected_empreendimento)
+    html(context_menu_html, height=350)
+    
+    # Comparação de períodos
+    if st.session_state.get('show_comparison', False):
+        st.markdown("---")
+        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+        display_period_comparison(df_filtered, empreendimento_snapshots)
+    
+    # Gerenciamento de snapshots na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
+    
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    if empreendimento_snapshots:
+        for version_name in sorted(empreendimento_snapshots.keys()):
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                st.write(f"`{version_name}`")
+            with col2:
+                if st.button("🗑️", key=f"del_{version_name}"):
+                    if delete_snapshot(selected_empreendimento, version_name):
+                        st.success(f"✅ {version_name} deletado!")
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
+
