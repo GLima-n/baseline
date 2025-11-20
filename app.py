@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
+from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
 try:
@@ -200,6 +201,192 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
+# --- Menu de Contexto com Botão Direito CORRIGIDO ---
+
+def create_context_menu(selected_empreendimento):
+    """Cria um menu de contexto com botão direito usando HTML/JS corrigido"""
+    
+    html_code = f"""
+<script>
+function showContextMenu(event) {{
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const contextMenu = document.getElementById('context-menu');
+    if (!contextMenu) return;
+    
+    // Posiciona o menu no local do clique
+    const x = event.clientX;
+    const y = event.clientY;
+    
+    contextMenu.style.left = x + 'px';
+    contextMenu.style.top = y + 'px';
+    contextMenu.style.display = 'block';
+}}
+
+function executeAction(action, empreendimento) {{
+    console.log('Executando ação:', action, 'para:', empreendimento);
+    
+    // Esconde o menu
+    const contextMenu = document.getElementById('context-menu');
+    if (contextMenu) {{
+        contextMenu.style.display = 'none';
+    }}
+    
+    // Cria um formulário temporário para enviar a ação
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = window.location.href;
+    
+    const actionInput = document.createElement('input');
+    actionInput.type = 'hidden';
+    actionInput.name = 'context_menu_action';
+    actionInput.value = action;
+    form.appendChild(actionInput);
+    
+    const empreendimentoInput = document.createElement('input');
+    empreendimentoInput.type = 'hidden';
+    empreendimentoInput.name = 'context_menu_empreendimento';
+    empreendimentoInput.value = empreendimento;
+    form.appendChild(empreendimentoInput);
+    
+    document.body.appendChild(form);
+    
+    // Envia a ação para o Streamlit via query parameters
+    const url = new URL(window.location.href);
+    url.searchParams.set('action', action);
+    url.searchParams.set('empreendimento', empreendimento);
+    url.searchParams.set('timestamp', Date.now().toString());
+    
+    // Usa window.location.href para forçar recarregamento
+    window.location.href = url.toString();
+}}
+
+// Fecha o menu quando clicar em qualquer lugar
+document.addEventListener('click', function(e) {{
+    const contextMenu = document.getElementById('context-menu');
+    if (contextMenu && !contextMenu.contains(e.target)) {{
+        contextMenu.style.display = 'none';
+    }}
+}});
+
+// Fecha o menu com ESC
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+        const contextMenu = document.getElementById('context-menu');
+        if (contextMenu) {{
+            contextMenu.style.display = 'none';
+        }}
+    }}
+}});
+
+// Previne o menu de contexto padrão na área do Gantt
+document.addEventListener('contextmenu', function(e) {{
+    if (e.target.closest('#gantt-area')) {{
+        showContextMenu(e);
+    }}
+}}, true);
+</script>
+
+<style>
+#context-menu {{
+    position: fixed;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10000;
+    display: none;
+    padding: 8px 0;
+    min-width: 200px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+}}
+
+.menu-item {{
+    padding: 10px 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+}}
+
+.menu-item:hover {{
+    background-color: #f0f0f0;
+}}
+
+#gantt-area {{
+    height: 300px;
+    border: 2px dashed #ccc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f9f9f9;
+    cursor: pointer;
+    margin: 20px 0;
+    border-radius: 10px;
+    user-select: none;
+}}
+</style>
+
+<div id="gantt-area">
+    <div style="text-align: center;">
+        <h3>📊 Área do Gráfico de Gantt</h3>
+        <p>Clique com o botão direito para abrir o menu de contexto</p>
+    </div>
+</div>
+
+<div id="context-menu">
+    <button class="menu-item" onclick="executeAction('take_snapshot', '{selected_empreendimento}')">
+        📸 <span>Tirar Snapshot</span>
+    </button>
+    <button class="menu-item" onclick="executeAction('restore_snapshot', '{selected_empreendimento}')">
+        🔄 <span>Restaurar Snapshot</span>
+    </button>
+    <button class="menu-item" onclick="executeAction('delete_snapshot', '{selected_empreendimento}')">
+        🗑️ <span>Deletar Snapshot</span>
+    </button>
+</div>
+"""
+    return html_code
+
+# --- Processamento das Ações do Menu CORRIGIDO ---
+
+def process_context_menu_actions():
+    """Processa as ações do menu de contexto via query parameters"""
+    query_params = st.query_params
+    
+    action = query_params.get("action", [None])[0]
+    empreendimento = query_params.get("empreendimento", [None])[0]
+    
+    if action and empreendimento:
+        st.info(f"Processando ação: {action} para {empreendimento}")
+        
+        # Limpa os parâmetros imediatamente
+        st.query_params.clear()
+        
+        df = st.session_state.df
+        
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+        
+        elif action == 'restore_snapshot':
+            st.session_state.show_restore_dialog = True
+            st.rerun()
+        
+        elif action == 'delete_snapshot':
+            st.session_state.show_delete_dialog = True
+            st.rerun()
+
 # --- Diálogos para Restaurar e Deletar ---
 
 def show_restore_dialog(selected_empreendimento, snapshots):
@@ -328,63 +515,7 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
     
     st.dataframe(df_final, use_container_width=True)
 
-# --- SIMULAÇÃO DE MENU DE CONTEXTO COM BOTÕES STREAMLIT ---
-
-def show_context_menu_simulation(selected_empreendimento):
-    """Simula um menu de contexto usando apenas componentes Streamlit"""
-    
-    st.markdown("---")
-    st.subheader("🎯 Menu de Contexto (Simulado)")
-    
-    # Área visual para o "gráfico de Gantt"
-    with st.container():
-        st.markdown("""
-        <div style='
-            height: 200px; 
-            border: 2px dashed #ccc; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            background-color: #f9f9f9; 
-            margin: 20px 0; 
-            border-radius: 10px;
-            text-align: center;
-        '>
-            <div>
-                <h3>📊 Área do Gráfico de Gantt</h3>
-                <p><em>Use os botões abaixo como menu de contexto</em></p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Botões que simulam as ações do menu de contexto
-    st.markdown("**Ações disponíveis:**")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📸 **Tirar Snapshot**", use_container_width=True, 
-                    help="Cria um novo snapshot do projeto atual"):
-            try:
-                version_name = take_snapshot(st.session_state.df, selected_empreendimento)
-                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot: {e}")
-    
-    with col2:
-        if st.button("🔄 **Restaurar Snapshot**", use_container_width=True,
-                    help="Restaura um snapshot anterior"):
-            st.session_state.show_restore_dialog = True
-            st.rerun()
-    
-    with col3:
-        if st.button("🗑️ **Gerenciar Snapshots**", use_container_width=True,
-                    help="Visualiza e deleta snapshots"):
-            st.session_state.show_delete_dialog = True
-            st.rerun()
-
-# --- Aplicação Principal SIMPLIFICADA ---
+# --- Aplicação Principal CORRIGIDA ---
 
 def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
@@ -403,6 +534,9 @@ def main():
             st.session_state[key] = default_value
     
     create_snapshots_table()
+    
+    # Processa ações do menu de contexto PRIMEIRO
+    process_context_menu_actions()
     
     df = st.session_state.df
     snapshots = load_snapshots()
@@ -446,8 +580,34 @@ def main():
         else:
             st.info("ℹ️ Nenhum snapshot disponível")
     
-    # Menu de contexto simulado (100% Streamlit)
-    show_context_menu_simulation(selected_empreendimento)
+    # Menu de contexto com botão direito
+    st.markdown("---")
+    st.subheader("🎯 Menu de Contexto (Botão Direito)")
+    
+    context_menu_html = create_context_menu(selected_empreendimento)
+    html(context_menu_html, height=350)
+    
+    # Botões alternativos para garantir funcionalidade
+    st.markdown("**Alternativa:** Use estes botões se o menu de contexto não funcionar:")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("📸 Tirar Snapshot (Alternativo)", key="alt_take", use_container_width=True):
+            try:
+                version_name = take_snapshot(df, selected_empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+    
+    with col2:
+        if st.button("🔄 Restaurar (Alternativo)", key="alt_restore", use_container_width=True):
+            st.session_state.show_restore_dialog = True
+            st.rerun()
+    
+    with col3:
+        if st.button("🗑️ Gerenciar (Alternativo)", key="alt_delete", use_container_width=True):
+            st.session_state.show_delete_dialog = True
+            st.rerun()
     
     # Diálogos modais
     if st.session_state.show_restore_dialog:
