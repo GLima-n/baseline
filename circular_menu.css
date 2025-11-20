@@ -5,7 +5,7 @@
     position: absolute;
     z-index: 10000;
     /* Inicialmente invisível */
-    opacity: 0;
+    opacity: 0; 
     transform: scale(0.1);
     transition: opacity 0.2s ease-out, transform 0.2s ease-out;
     pointer-events: none; /* Não interfere em cliques quando invisível */
