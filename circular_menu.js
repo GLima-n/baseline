@@ -4,6 +4,7 @@ function createSnapshot(empreendimento) {
     // Navega para a mesma URL mas com parâmetros que indicam para criar snapshot
     const currentUrl = window.location.href.split('?')[0];
     const encodedEmpreendimento = encodeURIComponent(empreendimento);
+    // CORREÇÃO: Adicionando o parâmetro 't' para forçar o Streamlit a recarregar a página e processar o parâmetro.
     const newUrl = currentUrl + '?take_snapshot=true&empreendimento=' + encodedEmpreendimento + '&t=' + Date.now();
     window.location.href = newUrl;
 }
@@ -12,12 +13,13 @@ function viewPeriod(empreendimento) {
     // Navega para a mesma URL mas com parâmetros que indicam para visualizar período
     const currentUrl = window.location.href.split('?')[0];
     const encodedEmpreendimento = encodeURIComponent(empreendimento);
-    // Adiciona um parâmetro para acionar a visualização do período
+    // CORREÇÃO: Adicionando o parâmetro 't' para forçar o Streamlit a recarregar a página e processar o parâmetro.
     const newUrl = currentUrl + '?view_period=true&empreendimento=' + encodedEmpreendimento + '&t=' + Date.now();
     window.location.href = newUrl;
 }
 
 function injectCircularMenu(empreendimento) {
+    // CORREÇÃO: O seletor deve ser mais robusto, mas o ID 'gantt-chart-area' é o alvo.
     const ganttArea = document.getElementById('gantt-chart-area');
     
     if (ganttArea) {
