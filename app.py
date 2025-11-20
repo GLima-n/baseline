@@ -265,8 +265,7 @@ def inject_js_context_menu(gantt_area_html, selected_empreendimento):
     """
     Injeta o HTML da área do gráfico, o CSS e o JavaScript para o menu circular.
     
-    NOTA: O código JS foi corrigido para usar query parameters na URL em vez de sessionStorage
-    e window.location.reload(), o que é mais robusto para comunicação com o Streamlit.
+    CORRIGIDO: O JS agora usa Streamlit.setComponentValue() para enviar a ação de volta ao Python.
     """
     
     # 1. Conteúdo do circular_menu.css (Assumindo o conteúdo original)
@@ -294,7 +293,7 @@ def inject_js_context_menu(gantt_area_html, selected_empreendimento):
 }
 """
     
-    # 2. Conteúdo do circular_menu.js (Corrigido para usar query parameters)
+    # 2. Conteúdo do circular_menu.js (Corrigido para usar Streamlit.setComponentValue)
     js_code = f"""
 // Variável global para armazenar o empreendimento
 let currentEmpreendimento = "";
@@ -303,51 +302,52 @@ function injectCircularMenu(empreendimento) {{
     currentEmpreendimento = empreendimento;
     
     // Cria o menu de contexto
-    const menu = document.createElement('div');
-    menu.className = 'context-menu';
-    menu.id = 'snapshot-context-menu';
+    let menu = document.getElementById('snapshot-context-menu');
+    if (!menu) {{
+        menu = document.createElement('div');
+        menu.className = 'context-menu';
+        menu.id = 'snapshot-context-menu';
+        document.body.appendChild(menu);
+    }}
     
-    // Conteúdo do menu
+    // Conteúdo do menu (Atualizado com o empreendimento correto)
     menu.innerHTML = `
-        <div class="menu-item" onclick="handleMenuClick('take_snapshot', '${selected_empreendimento}')">📸 Tirar Snapshot (Linha de Base)</div>
-        <div class="menu-item" onclick="handleMenuClick('restore_snapshot', '${selected_empreendimento}')">🔄 Restaurar Snapshot (Não Implementado)</div>
-        <div class="menu-item" onclick="handleMenuClick('delete_snapshot', '${selected_empreendimento}')">🗑️ Deletar Snapshot (Não Implementado)</div>
+        <div class="menu-item" onclick="handleMenuClick('take_snapshot', '{selected_empreendimento}')">📸 Tirar Snapshot (Linha de Base)</div>
+        <div class="menu-item" onclick="handleMenuClick('restore_snapshot', '{selected_empreendimento}')">🔄 Restaurar Snapshot (Não Implementado)</div>
+        <div class="menu-item" onclick="handleMenuClick('delete_snapshot', '{selected_empreendimento}')">🗑️ Deletar Snapshot (Não Implementado)</div>
     `;
-    
-    document.body.appendChild(menu);
 
     // Manipulador de clique com o botão direito
     const ganttArea = document.getElementById('gantt-chart-area');
     if (ganttArea) {{
-        ganttArea.addEventListener('contextmenu', function(e) {{
+        ganttArea.oncontextmenu = function(e) {{
             e.preventDefault(); // Previne o menu de contexto padrão do navegador
             
             // Posiciona o menu
             menu.style.left = e.pageX + 'px';
             menu.style.top = e.pageY + 'px';
             menu.style.display = 'block';
-        }});
+        }};
     }}
 
     // Manipulador de clique em qualquer lugar para fechar o menu
-    document.addEventListener('click', function(e) {{
-        if (!menu.contains(e.target)) {{
+    document.onclick = function(e) {{
+        if (menu.style.display === 'block' && !menu.contains(e.target)) {{
             menu.style.display = 'none';
         }}
-    }});
+    }};
 }}
 
-// FUNÇÃO CORRIGIDA: Usa query parameters para comunicar a ação ao Streamlit
+// FUNÇÃO CORRIGIDA: Usa Streamlit.setComponentValue para enviar a ação ao Streamlit
 function handleMenuClick(action, empreendimento) {{
-    // Cria um objeto URL a partir da URL atual
-    const url = new URL(window.location.href);
+    // Esconde o menu
+    document.getElementById('snapshot-context-menu').style.display = 'none';
     
-    // Adiciona os parâmetros de ação e empreendimento
-    url.searchParams.set('snapshot_action', action);
-    url.searchParams.set('empreendimento_alvo', empreendimento);
-    
-    // Redireciona para a nova URL. Isso força um re-run do Streamlit.
-    window.location.href = url.toString();
+    // Envia a ação e o empreendimento para o Streamlit
+    // O Streamlit deve estar escutando por um valor retornado pelo componente
+    if (window.Streamlit) {{
+        window.Streamlit.setComponentValue(JSON.stringify({{ action: action, empreendimento: empreendimento }}));
+    }}
 }}
 """
     
@@ -359,6 +359,7 @@ function handleMenuClick(action, empreendimento) {{
     
     {gantt_area_html}
     
+    <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.3.0/dist/streamlit-component-lib.js"></script>
     <script>
         {js_code}
         // Chama a função principal do JS com o empreendimento selecionado
@@ -367,7 +368,14 @@ function handleMenuClick(action, empreendimento) {{
     """
     
     # Injeta o HTML/CSS/JS no Streamlit
-    html(full_html_code, height=450)
+    # Para que o Streamlit receba o valor, precisamos de um componente que retorne um valor.
+    # Usaremos o st.components.v1.html e faremos o Streamlit "escutar" o valor retornado.
+    component_value = html(full_html_code, height=450, default=None, key="gantt_component")
+    
+    # Armazena o valor retornado no session_state para ser processado no próximo rerun
+    if component_value:
+        st.session_state.snapshot_action_data = json.loads(component_value)
+        st.rerun() # Força o rerun para processar a ação
 
 def display_period_comparison(df_filtered, empreendimento_snapshots):
     """
@@ -489,16 +497,15 @@ def main():
     # Inicializa a tabela no banco (ou mock)
     create_snapshots_table()
 
-    # 1. Lógica de Execução de Ação do Menu de Contexto (CORRIGIDO)
-    # Usa st.query_params para ler os parâmetros da URL
-    query_params = st.query_params
-    action = query_params.get("snapshot_action", None)
-    empreendimento_alvo = query_params.get("empreendimento_alvo", None)
+    # 1. Lógica de Execução de Ação do Menu de Contexto (NOVA ABORDAGEM)
+    action_data = st.session_state.get("snapshot_action_data")
 
-    if action and empreendimento_alvo:
-        # Limpa os parâmetros de consulta para evitar repetição da ação
-        # Isso requer um re-run, mas é necessário para limpar a URL
-        st.query_params.clear()
+    if action_data:
+        # Limpa o session_state para evitar repetição da ação
+        del st.session_state.snapshot_action_data
+        
+        action = action_data.get("action")
+        empreendimento_alvo = action_data.get("empreendimento")
         
         # Carrega os dados e o DataFrame
         df = create_mock_dataframe()
@@ -518,13 +525,14 @@ def main():
             # A deleção via menu de contexto é mais complexa, pois exige saber qual versão deletar.
             st.warning(f"⚠️ Ação 'Deletar Snapshot' para '{empreendimento_alvo}' não implementada via menu de contexto. Use a barra lateral.")
             
-        # Força um re-run após a execução da ação e limpeza dos parâmetros
+        # Força um re-run após a execução da ação
         st.rerun()
         return # Sai da função main para o re-run
         
     # 2. Inicialização e Carregamento de Dados (O restante do código original)
     
     # Verifica se há parâmetros de ação na URL (os originais)
+    query_params = st.query_params
     take_snapshot_param = query_params.get('take_snapshot')
     view_period_param = query_params.get('view_period')
     empreendimento_param = query_params.get('empreendimento')
