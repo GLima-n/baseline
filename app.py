@@ -202,17 +202,18 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto Simplificado ---
+# --- Menu de Contexto Corrigido ---
 
-def create_simple_context_menu(selected_empreendimento):
-    """Cria menu de contexto simples usando apenas HTML/JS básico"""
+def create_context_menu_component(selected_empreendimento):
+    """Cria menu de contexto sem recarregar a página inteira"""
     
-    html_code = f"""
+    html_code = f'''
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
     <div style="text-align: center;">
         <h3>Área do Gráfico de Gantt</h3>
         <p>Clique com o botão direito para abrir o menu de snapshot</p>
         <p><small>Empreendimento: {selected_empreendimento}</small></p>
+        <div id="action-status" style="margin-top: 10px; padding: 5px; border-radius: 3px; display: none;"></div>
     </div>
 </div>
 
@@ -244,23 +245,37 @@ def create_simple_context_menu(selected_empreendimento):
 const menu = document.createElement('div');
 menu.className = 'context-menu';
 menu.innerHTML = `
-    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
+    <div class="context-menu-item" onclick="handleAction('take_snapshot')">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="handleAction('restore_snapshot')">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="handleAction('delete_snapshot')">🗑️ Deletar Snapshot</div>
 `;
 document.body.appendChild(menu);
 
-function takeSnapshot() {{
-    // Abordagem mais simples: redireciona com parâmetros na URL
-    window.location.href = `?action=take_snapshot&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
-}}
-
-function restoreSnapshot() {{
-    window.location.href = `?action=restore_snapshot&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
-}}
-
-function deleteSnapshot() {{
-    window.location.href = `?action=delete_snapshot&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
+function handleAction(action) {{
+    // Mostra status
+    const statusEl = document.getElementById('action-status');
+    statusEl.style.display = 'block';
+    statusEl.style.background = '#fff3cd';
+    statusEl.style.border = '1px solid #ffeaa7';
+    statusEl.innerHTML = 'Processando...';
+    
+    // Usa a API do Streamlit para comunicação
+    if (window.Streamlit) {{
+        window.Streamlit.setComponentValue({{
+            action: action,
+            empreendimento: '{selected_empreendimento}',
+            timestamp: new Date().getTime()
+        }});
+    }}
+    
+    hideMenu();
+    
+    // Feedback visual
+    setTimeout(() => {{
+        statusEl.style.background = '#d1ecf1';
+        statusEl.style.border = '1px solid #bee5eb';
+        statusEl.innerHTML = 'Ação enviada! Atualizando...';
+    }}, 500);
 }}
 
 function showMenu(x, y) {{
@@ -292,40 +307,10 @@ document.addEventListener('keydown', function(e) {{
     }}
 }});
 </script>
-"""
+'''
     return html_code
 
-# --- Processamento de Ações ---
-
-def process_actions():
-    """Processa ações vindas do menu de contexto"""
-    query_params = st.query_params
-    
-    action = query_params.get('action')
-    empreendimento = query_params.get('empreendimento')
-    
-    if action and empreendimento:
-        # Limpa os parâmetros
-        st.query_params.clear()
-        
-        df = create_mock_dataframe()
-        
-        if action == 'take_snapshot':
-            try:
-                version_name = take_snapshot(df, empreendimento)
-                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                # Atualiza o session_state para refletir a mudança
-                if 'snapshots_updated' not in st.session_state:
-                    st.session_state.snapshots_updated = 0
-                st.session_state.snapshots_updated += 1
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot: {e}")
-        elif action == 'restore_snapshot':
-            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
-        elif action == 'delete_snapshot':
-            st.warning("🗑️ Use a sidebar para deletar snapshots específicos")
-
-# --- Aplicação Principal Simplificada ---
+# --- Aplicação Principal Corrigida ---
 
 def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
@@ -334,12 +319,11 @@ def main():
     # Inicialização
     create_snapshots_table()
     
-    # Processa ações primeiro
-    process_actions()
-    
     # Inicializa dados se necessário
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
+    if 'component_trigger' not in st.session_state:
+        st.session_state.component_trigger = 0
     
     # Carrega dados
     df = st.session_state.df
@@ -361,6 +345,7 @@ def main():
             try:
                 version_name = take_snapshot(df, selected_empreendimento)
                 st.success(f"✅ {version_name} criado!")
+                st.session_state.component_trigger += 1
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
@@ -390,6 +375,7 @@ def main():
                     if st.button("🗑️", key=f"del_{version_name}"):
                         if delete_snapshot(selected_empreendimento, version_name):
                             st.success(f"✅ {version_name} deletado!")
+                            st.session_state.component_trigger += 1
                             st.rerun()
         else:
             st.info("ℹ️ Nenhum snapshot salvo")
@@ -460,14 +446,37 @@ def main():
         else:
             st.info(f"📊 Comparando **Real Atual** com **{selected_version}**")
         
-        # Menu de contexto
-        st.markdown("---")
-        st.subheader("🎯 Menu de Contexto")
-        st.markdown("**Clique com o botão direito na área abaixo:**")
-        
-        # Componente do menu de contexto - CORREÇÃO: sem parâmetro key
-        context_menu_html = create_simple_context_menu(selected_empreendimento)
-        html(context_menu_html, height=350)
+        # Menu de contexto - usando container para isolamento
+        with st.container():
+            st.markdown("---")
+            st.subheader("🎯 Menu de Contexto")
+            st.markdown("**Clique com o botão direito na área abaixo:**")
+            
+            # Componente do menu de contexto
+            context_menu_html = create_context_menu_component(selected_empreendimento)
+            
+            # Usando um container específico para o componente
+            component_container = st.empty()
+            with component_container:
+                component_value = html(context_menu_html, height=350)
+            
+            # Processa ações do componente
+            if component_value:
+                action = component_value.get('action')
+                empreendimento = component_value.get('empreendimento')
+                
+                if action == 'take_snapshot' and empreendimento == selected_empreendimento:
+                    try:
+                        version_name = take_snapshot(df, empreendimento)
+                        st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                        st.session_state.component_trigger += 1
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao criar snapshot: {e}")
+                elif action == 'restore_snapshot':
+                    st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+                elif action == 'delete_snapshot':
+                    st.warning("🗑️ Use a sidebar para deletar snapshots específicos")
     
     with col2:
         # Estatísticas e informações
