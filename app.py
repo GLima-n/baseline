@@ -202,10 +202,10 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Solução Simplificada para Menu de Contexto ---
+# --- Solução Corrigida para Menu de Contexto ---
 
-def create_simple_context_menu(selected_empreendimento):
-    """Cria um menu de contexto simples usando apenas HTML/JS básico"""
+def create_context_menu(selected_empreendimento):
+    """Cria um menu de contexto usando a API de query parameters do Streamlit"""
     
     html_code = f"""
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
@@ -239,43 +239,33 @@ def create_simple_context_menu(selected_empreendimento):
 </style>
 
 <script>
-// Variável global para armazenar a ação
-let snapshotAction = null;
-
 // Cria o menu de contexto
 const menu = document.createElement('div');
 menu.className = 'context-menu';
 menu.innerHTML = `
-    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
+    <div class="context-menu-item" onclick="handleMenuAction('take_snapshot')">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="handleMenuAction('restore_snapshot')">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="handleMenuAction('delete_snapshot')">🗑️ Deletar Snapshot</div>
 `;
 document.body.appendChild(menu);
 
-// Funções do menu
-function takeSnapshot() {{
-    snapshotAction = 'take_snapshot';
+// Função para lidar com ações do menu
+function handleMenuAction(action) {{
     hideMenu();
-    // Usando uma abordagem simples: criar um link que atualiza a URL
-    const link = document.createElement('a');
-    link.href = `?snapshot_action=take_snapshot&empreendimento={selected_empreendimento}`;
-    link.click();
-}}
-
-function restoreSnapshot() {{
-    snapshotAction = 'restore_snapshot';
-    hideMenu();
-    const link = document.createElement('a');
-    link.href = `?snapshot_action=restore_snapshot&empreendimento={selected_empreendimento}`;
-    link.click();
-}}
-
-function deleteSnapshot() {{
-    snapshotAction = 'delete_snapshot';
-    hideMenu();
-    const link = document.createElement('a');
-    link.href = `?snapshot_action=delete_snapshot&empreendimento={selected_empreendimento}`;
-    link.click();
+    
+    // Usa a API do Streamlit para atualizar os query parameters
+    const queryParams = new URLSearchParams(window.location.search);
+    queryParams.set('snapshot_action', action);
+    queryParams.set('empreendimento', '{selected_empreendimento}');
+    
+    // Atualiza a URL sem recarregar a página
+    window.history.replaceState({{}}, '', '?' + queryParams.toString());
+    
+    // Dispara um evento customizado que o Streamlit pode detectar
+    const event = new CustomEvent('streamlit:setQueryParams', {{
+        detail: {{ queryParams: queryParams.toString() }}
+    }});
+    window.dispatchEvent(event);
 }}
 
 function showMenu(x, y) {{
@@ -320,7 +310,7 @@ def process_snapshot_actions():
     empreendimento = query_params.get('empreendimento')
     
     if action and empreendimento:
-        # Limpa os parâmetros imediatamente
+        # Limpa os parâmetros
         st.query_params.clear()
         
         df = create_mock_dataframe()
@@ -446,7 +436,7 @@ def main():
     # Menu de contexto
     st.markdown("---")
     st.subheader("Menu de Contexto (Clique com Botão Direito)")
-    context_menu_html = create_simple_context_menu(selected_empreendimento)
+    context_menu_html = create_context_menu(selected_empreendimento)
     html(context_menu_html, height=350)
     
     # Comparação de períodos
@@ -473,4 +463,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
