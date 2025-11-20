@@ -202,10 +202,10 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto Simplificado ---
+# --- Menu de Contexto com Formulário ---
 
-def create_context_menu_component(selected_empreendimento):
-    """Cria menu de contexto usando query parameters"""
+def create_context_menu_with_form(selected_empreendimento):
+    """Cria menu de contexto usando formulário HTML"""
     
     html_code = f'''
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
@@ -215,6 +215,13 @@ def create_context_menu_component(selected_empreendimento):
         <p><small>Empreendimento: {selected_empreendimento}</small></p>
     </div>
 </div>
+
+<!-- Formulário invisível para enviar ações -->
+<form id="context-menu-form" method="get" style="display: none;">
+    <input type="hidden" name="context_action" id="context_action_input">
+    <input type="hidden" name="context_empreendimento" id="context_empreendimento_input" value="{selected_empreendimento}">
+    <input type="submit" id="context_submit">
+</form>
 
 <style>
 .context-menu {{
@@ -251,15 +258,9 @@ menu.innerHTML = `
 document.body.appendChild(menu);
 
 function handleAction(action) {{
-    // Atualiza a URL com os parâmetros - isso fará o Streamlit detectar a mudança
-    const url = new URL(window.location);
-    url.searchParams.set('context_action', action);
-    url.searchParams.set('context_empreendimento', '{selected_empreendimento}');
-    url.searchParams.set('t', new Date().getTime()); // timestamp para evitar cache
-    
-    // Navega para a nova URL - isso acionará um rerun no Streamlit
-    window.location.href = url.toString();
-    
+    // Preenche o formulário e submete
+    document.getElementById('context_action_input').value = action;
+    document.getElementById('context_submit').click();
     hideMenu();
 }}
 
@@ -323,7 +324,7 @@ def process_context_menu_actions():
         elif action == 'delete_snapshot':
             st.warning("🗑️ Use a sidebar para deletar snapshots específicos")
 
-# --- Aplicação Principal Simplificada ---
+# --- Aplicação Principal ---
 
 def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
@@ -463,8 +464,8 @@ def main():
         st.subheader("🎯 Menu de Contexto")
         st.markdown("**Clique com o botão direito na área abaixo:**")
         
-        # Componente do menu de contexto
-        context_menu_html = create_context_menu_component(selected_empreendimento)
+        # Componente do menu de contexto com formulário
+        context_menu_html = create_context_menu_with_form(selected_empreendimento)
         html(context_menu_html, height=350)
     
     with col2:
