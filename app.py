@@ -368,9 +368,9 @@ function handleMenuClick(action, empreendimento) {{
     """
     
     # Injeta o HTML/CSS/JS no Streamlit
-    # Para que o Streamlit receba o valor, precisamos de um componente que retorne um valor.
-    # Usaremos o st.components.v1.html e faremos o Streamlit "escutar" o valor retornado.
-    component_value = html(full_html_code, height=450, default=None, key="gantt_component")
+    # CORREÇÃO: Removendo 'default=None' e 'key="gantt_component"' da chamada do html()
+    # para evitar o TypeError, pois o html() não aceita esses argumentos.
+    component_value = html(full_html_code, height=450)
     
     # Armazena o valor retornado no session_state para ser processado no próximo rerun
     if component_value:
