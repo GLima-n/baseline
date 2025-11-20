@@ -234,14 +234,10 @@ def create_gantt_chart(df):
     
     return '<div id="gantt-chart-area" style="height: 400px; border: 1px solid #ccc; margin-top: 10px; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9;">Clique com o botão direito nesta área para o menu de Snapshot.</div>'
 
-# --- Funções para comunicação JS-Python corrigidas ---
+# --- Nova Abordagem para Comunicação JS-Python ---
 
-def inject_js_context_menu(gantt_area_html, selected_empreendimento):
-    """
-    Injeta o HTML da área do gráfico, o CSS e o JavaScript para o menu circular.
-    
-    CORREÇÃO: Usando uma abordagem diferente para comunicação JS-Python
-    """
+def create_context_menu_component(selected_empreendimento):
+    """Cria um componente personalizado para o menu de contexto"""
     
     css_code = """
 .context-menu {
@@ -265,29 +261,51 @@ def inject_js_context_menu(gantt_area_html, selected_empreendimento):
 .menu-item:hover {
     background-color: #f0f0f0;
 }
+
+#gantt-chart-area {
+    height: 400px; 
+    border: 1px solid #ccc; 
+    margin-top: 10px; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    background-color: #f9f9f9;
+    cursor: context-menu;
+}
 """
     
     js_code = f"""
-function injectCircularMenu(empreendimento) {{
-    // Cria o menu de contexto
-    let menu = document.getElementById('snapshot-context-menu');
-    if (!menu) {{
-        menu = document.createElement('div');
-        menu.className = 'context-menu';
-        menu.id = 'snapshot-context-menu';
-        document.body.appendChild(menu);
-    }}
+<script>
+(function() {{
+    let currentEmpreendimento = "{selected_empreendimento}";
     
-    // Conteúdo do menu
-    menu.innerHTML = `
-        <div class="menu-item" data-action="take_snapshot">📸 Tirar Snapshot (Linha de Base)</div>
-        <div class="menu-item" data-action="restore_snapshot">🔄 Restaurar Snapshot</div>
-        <div class="menu-item" data-action="delete_snapshot">🗑️ Deletar Snapshot</div>
-    `;
+    function initContextMenu() {{
+        // Cria o menu de contexto
+        let menu = document.getElementById('snapshot-context-menu');
+        if (!menu) {{
+            menu = document.createElement('div');
+            menu.className = 'context-menu';
+            menu.id = 'snapshot-context-menu';
+            document.body.appendChild(menu);
+        }}
+        
+        // Conteúdo do menu
+        menu.innerHTML = `
+            <div class="menu-item" data-action="take_snapshot">📸 Tirar Snapshot (Linha de Base)</div>
+            <div class="menu-item" data-action="restore_snapshot">🔄 Restaurar Snapshot</div>
+            <div class="menu-item" data-action="delete_snapshot">🗑️ Deletar Snapshot</div>
+        `;
 
-    // Manipulador de clique com o botão direito
-    const ganttArea = document.getElementById('gantt-chart-area');
-    if (ganttArea) {{
+        // Garante que a área do Gantt existe
+        let ganttArea = document.getElementById('gantt-chart-area');
+        if (!ganttArea) {{
+            ganttArea = document.createElement('div');
+            ganttArea.id = 'gantt-chart-area';
+            ganttArea.innerHTML = 'Clique com o botão direito nesta área para o menu de Snapshot.';
+            document.body.appendChild(ganttArea);
+        }}
+
+        // Manipulador de clique com o botão direito
         ganttArea.oncontextmenu = function(e) {{
             e.preventDefault();
             
@@ -296,117 +314,93 @@ function injectCircularMenu(empreendimento) {{
             menu.style.top = e.pageY + 'px';
             menu.style.display = 'block';
         }};
+
+        // Manipulador de clique nos itens do menu
+        menu.onclick = function(e) {{
+            if (e.target.classList.contains('menu-item')) {{
+                const action = e.target.getAttribute('data-action');
+                handleMenuClick(action, currentEmpreendimento);
+            }}
+        }};
+
+        // Fecha o menu ao clicar em qualquer lugar
+        document.addEventListener('click', function(e) {{
+            if (menu.style.display === 'block' && !menu.contains(e.target)) {{
+                menu.style.display = 'none';
+            }}
+        }});
     }}
 
-    // Manipulador de clique nos itens do menu
-    menu.onclick = function(e) {{
-        if (e.target.classList.contains('menu-item')) {{
-            const action = e.target.getAttribute('data-action');
-            handleMenuClick(action, empreendimento);
+    function handleMenuClick(action, empreendimento) {{
+        // Esconde o menu
+        document.getElementById('snapshot-context-menu').style.display = 'none';
+        
+        // Cria um evento customizado para enviar os dados
+        const event = new CustomEvent('snapshotAction', {{
+            detail: {{
+                action: action,
+                empreendimento: empreendimento
+            }}
+        }});
+        
+        // Dispara o evento
+        document.dispatchEvent(event);
+        
+        console.log('Ação enviada:', action, 'Empreendimento:', empreendimento);
+        
+        // Envia também via window para o Streamlit
+        if (window.parent) {{
+            window.parent.postMessage({{
+                type: 'SNAPSHOT_ACTION',
+                action: action,
+                empreendimento: empreendimento
+            }}, '*');
         }}
-    }};
+    }}
 
-    // Fecha o menu ao clicar em qualquer lugar
-    document.onclick = function(e) {{
-        if (menu.style.display === 'block' && !menu.contains(e.target)) {{
-            menu.style.display = 'none';
-        }}
-    }};
-}}
-
-// FUNÇÃO CORRIGIDA: Usando window.parent.postMessage para comunicação
-function handleMenuClick(action, empreendimento) {{
-    // Esconde o menu
-    document.getElementById('snapshot-context-menu').style.display = 'none';
-    
-    // Envia a mensagem para o Streamlit
-    window.parent.postMessage({{
-        type: 'streamlit:setComponentValue',
-        value: JSON.stringify({{
-            action: action,
-            empreendimento: empreendimento
-        }})
-    }}, '*');
-    
-    console.log('Ação enviada:', action, 'Empreendimento:', empreendimento);
-}}
-
-// Inicializa o menu quando a página carrega
-document.addEventListener('DOMContentLoaded', function() {{
-    injectCircularMenu("{selected_empreendimento}");
-}});
-
-// Também inicializa se o DOM já estiver carregado
-if (document.readyState === 'loading') {{
-    document.addEventListener('DOMContentLoaded', function() {{
-        injectCircularMenu("{selected_empreendimento}");
-    }});
-}} else {{
-    injectCircularMenu("{selected_empreendimento}");
-}}
+    // Inicializa quando o DOM estiver pronto
+    if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', initContextMenu);
+    }} else {{
+        initContextMenu();
+    }}
+}})();
+</script>
 """
     
-    full_html_code = f"""
-    <style>
-        {css_code}
-    </style>
+    html_code = f"""
+<style>
+{css_code}
+</style>
+<div id="gantt-chart-area">Clique com o botão direito nesta área para o menu de Snapshot.</div>
+{js_code}
+"""
     
-    {gantt_area_html}
-    
-    <script>
-        {js_code}
-    </script>
-    """
-    
-    html(full_html_code, height=450)
+    return html_code
 
-def inject_global_js_listener():
-    """Injeta um listener global para capturar mensagens do menu de contexto"""
-    js_listener = """
-    <script>
-    // Listener para mensagens do menu de contexto
-    window.addEventListener('message', function(event) {
-        // Verifica se a mensagem é do tipo que queremos
-        if (event.data.type === 'streamlit:setComponentValue') {
-            try {
-                const data = JSON.parse(event.data.value);
-                
-                // Atualiza a URL com os parâmetros (abordagem alternativa)
-                const url = new URL(window.location);
-                url.searchParams.set('snapshot_action', data.action);
-                url.searchParams.set('snapshot_empreendimento', data.empreendimento);
-                
-                window.history.replaceState(null, '', url.toString());
-                
-                // Dispara um evento para o Streamlit saber que precisa atualizar
-                window.parent.postMessage({
-                    type: 'streamlit:triggerRerun',
-                    data: data
-                }, '*');
-            } catch (e) {
-                console.error('Erro ao processar mensagem:', e);
-            }
-        }
-    });
-    </script>
-    """
-    html(js_listener)
-
-def handle_js_messages():
-    """Processa mensagens do JavaScript via st.query_params"""
-    query_params = st.query_params
-    
-    action = query_params.get('snapshot_action')
-    empreendimento = query_params.get('snapshot_empreendimento')
-    
-    if action and empreendimento:
-        st.query_params.clear()
+def handle_snapshot_actions():
+    """Processa ações do menu de contexto"""
+    # Verifica se há ação pendente no session_state
+    if 'pending_snapshot_action' in st.session_state:
+        action_data = st.session_state.pending_snapshot_action
+        del st.session_state.pending_snapshot_action
         
-        st.session_state.snapshot_action_data = {
-            "action": action,
-            "empreendimento": empreendimento
-        }
-        st.rerun()
+        action = action_data.get('action')
+        empreendimento = action_data.get('empreendimento')
+        
+        df = create_mock_dataframe()
+        
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso para o empreendimento '{empreendimento}'!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+        elif action == 'restore_snapshot':
+            st.warning(f"⚠️ Ação 'Restaurar Snapshot' para '{empreendimento}' não implementada.")
+        elif action == 'delete_snapshot':
+            st.warning(f"⚠️ Ação 'Deletar Snapshot' para '{empreendimento}' não implementada via menu de contexto. Use a barra lateral.")
 
 def display_period_comparison(df_filtered, empreendimento_snapshots):
     """
@@ -510,35 +504,8 @@ def main():
 
     create_snapshots_table()
 
-    # 1. Processa mensagens do JavaScript primeiro
-    handle_js_messages()
-
-    # 2. Lógica de Execução de Ação do Menu de Contexto
-    action_data = st.session_state.get("snapshot_action_data")
-
-    if action_data:
-        del st.session_state.snapshot_action_data
-        
-        action = action_data.get("action")
-        empreendimento_alvo = action_data.get("empreendimento")
-        
-        df = create_mock_dataframe()
-        
-        if action == 'take_snapshot':
-            try:
-                version_name = take_snapshot(df, empreendimento_alvo)
-                st.success(f"✅ Snapshot '{version_name}' criado com sucesso para o empreendimento '{empreendimento_alvo}'!")
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot: {e}")
-                
-        elif action == 'restore_snapshot':
-            st.warning(f"⚠️ Ação 'Restaurar Snapshot' para '{empreendimento_alvo}' não implementada.")
-            
-        elif action == 'delete_snapshot':
-            st.warning(f"⚠️ Ação 'Deletar Snapshot' para '{empreendimento_alvo}' não implementada via menu de contexto. Use a barra lateral.")
-            
-        st.rerun()
-        return
+    # Processa ações do menu de contexto primeiro
+    handle_snapshot_actions()
 
     query_params = st.query_params
     take_snapshot_param = query_params.get('take_snapshot')
@@ -642,11 +609,80 @@ def main():
         
         st.info(f"📊 Comparando Real Atual com a Linha de Base: **{selected_version}**.")
     
-    inject_global_js_listener()
+    # Exibe o gráfico de Gantt
+    st.subheader("Gráfico de Gantt (Visualização Mock)")
     
-    gantt_area_html = create_gantt_chart(df_filtered)
+    df_display = df_filtered[['Empreendimento', 'Tarefa', 'Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']].copy()
     
-    inject_js_context_menu(gantt_area_html, selected_empreendimento)
+    for col in ['Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']:
+        if pd.api.types.is_datetime64_any_dtype(df_display[col]):
+            df_display[col] = df_display[col].dt.strftime('%Y-%m-%d')
+        
+    st.dataframe(df_display, use_container_width=True)
+    
+    # Componente do menu de contexto
+    st.markdown("### Menu de Contexto (Clique com Botão Direito)")
+    context_menu_html = create_context_menu_component(selected_empreendimento)
+    html(context_menu_html, height=450)
+    
+    # JavaScript para capturar ações e enviar para o Python
+    js_capture_code = """
+    <script>
+    // Captura mensagens do menu de contexto
+    window.addEventListener('message', function(event) {
+        if (event.data.type === 'SNAPSHOT_ACTION') {
+            // Envia os dados para o Streamlit via fetch
+            fetch('/snapshot_action', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action: event.data.action,
+                    empreendimento: event.data.empreendimento
+                })
+            }).then(response => {
+                console.log('Ação enviada com sucesso');
+                // Recarrega a página para ver as mudanças
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }).catch(error => {
+                console.error('Erro ao enviar ação:', error);
+            });
+        }
+    });
+    
+    // Alternativa: usa eventos customizados
+    document.addEventListener('snapshotAction', function(event) {
+        const data = event.detail;
+        // Envia via Streamlit setQueryParams
+        const url = new URL(window.location);
+        url.searchParams.set('snapshot_action', data.action);
+        url.searchParams.set('snapshot_empreendimento', data.empreendimento);
+        window.history.pushState({}, '', url);
+        
+        // Força o Streamlit a detectar a mudança
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: JSON.stringify(data)
+        }, '*');
+    });
+    </script>
+    """
+    html(js_capture_code)
+    
+    # Verifica se há ações nos query params
+    snapshot_action = st.query_params.get('snapshot_action')
+    snapshot_empreendimento = st.query_params.get('snapshot_empreendimento')
+    
+    if snapshot_action and snapshot_empreendimento:
+        st.session_state.pending_snapshot_action = {
+            'action': snapshot_action,
+            'empreendimento': snapshot_empreendimento
+        }
+        st.query_params.clear()
+        st.rerun()
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 💾 Snapshots Salvos")
