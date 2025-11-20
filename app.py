@@ -4,7 +4,6 @@ import json
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
-from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
 try:
@@ -201,151 +200,62 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Solução Corrigida para Menu de Contexto ---
+# --- Menu de Contexto Simples com Streamlit ---
 
-def create_context_menu(selected_empreendimento):
-    """Cria um menu de contexto usando comunicação direta com Streamlit"""
+def create_simple_context_menu(selected_empreendimento):
+    """Cria um menu de contexto simples usando apenas Streamlit"""
     
-    html_code = f"""
-<div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
-    <div style="text-align: center;">
-        <h3>Área do Gráfico de Gantt</h3>
-        <p>Clique com o botão direito para abrir o menu de snapshot</p>
-    </div>
-</div>
-
-<style>
-.context-menu {{
-    position: fixed;
-    background: white;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
-    z-index: 1000;
-    display: none;
-}}
-.context-menu-item {{
-    padding: 10px 15px;
-    cursor: pointer;
-    border-bottom: 1px solid #eee;
-}}
-.context-menu-item:hover {{
-    background: #f0f0f0;
-}}
-.context-menu-item:last-child {{
-    border-bottom: none;
-}}
-</style>
-
-<script>
-// Cria o menu de contexto
-const menu = document.createElement('div');
-menu.className = 'context-menu';
-menu.innerHTML = `
-    <div class="context-menu-item" onclick="handleMenuAction('take_snapshot')">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="handleMenuAction('restore_snapshot')">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="handleMenuAction('delete_snapshot')">🗑️ Deletar Snapshot</div>
-`;
-document.body.appendChild(menu);
-
-// Função para lidar com ações do menu
-function handleMenuAction(action) {{
-    hideMenu();
+    st.markdown("---")
+    st.subheader("📋 Menu de Contexto")
     
-    // Envia mensagem para o Streamlit
-    window.parent.postMessage({{
-        type: 'streamlit:setComponentValue',
-        value: {{
-            action: action,
-            empreendimento: '{selected_empreendimento}',
-            timestamp: new Date().getTime()
-        }}
-    }}, '*');
+    # Área clicável simulada
+    with st.container():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown(
+                f"""
+                <div style='
+                    height: 200px; 
+                    border: 2px dashed #ccc; 
+                    display: flex; 
+                    align-items: center; 
+                    justify-content: center; 
+                    background-color: #f9f9f9; 
+                    cursor: pointer;
+                    border-radius: 10px;
+                    margin: 20px 0;
+                    text-align: center;
+                '>
+                    <div>
+                        <h3>📊 Área do Gráfico de Gantt</h3>
+                        <p>Use os botões abaixo para ações de snapshot</p>
+                    </div>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
     
-    console.log('Ação enviada:', action, 'para:', '{selected_empreendimento}');
-}}
-
-function showMenu(x, y) {{
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-    menu.style.display = 'block';
-}}
-
-function hideMenu() {{
-    menu.style.display = 'none';
-}}
-
-// Event listeners
-document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
-    e.preventDefault();
-    showMenu(e.pageX, e.pageY);
-}});
-
-document.addEventListener('click', function(e) {{
-    if (!menu.contains(e.target)) {{
-        hideMenu();
-    }}
-}});
-
-// Fecha o menu com ESC
-document.addEventListener('keydown', function(e) {{
-    if (e.key === 'Escape') {{
-        hideMenu();
-    }}
-}});
-
-// Log para debug
-console.log('Menu de contexto carregado para:', '{selected_empreendimento}');
-</script>
-"""
-    return html_code
-
-# --- Função para processar ações do menu ---
-
-def process_snapshot_actions():
-    """Processa ações do menu de contexto via session_state"""
-    if 'context_menu_action' in st.session_state:
-        action_data = st.session_state.context_menu_action
-        action = action_data.get('action')
-        empreendimento = action_data.get('empreendimento')
-        
-        # Limpa a ação imediatamente
-        del st.session_state.context_menu_action
-        
-        if action and empreendimento:
-            df = st.session_state.df
-            
-            if action == 'take_snapshot':
-                try:
-                    version_name = take_snapshot(df, empreendimento)
-                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erro ao criar snapshot: {e}")
-            elif action == 'restore_snapshot':
-                st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
-            elif action == 'delete_snapshot':
-                st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
-
-# --- JavaScript para capturar mensagens ---
-
-def context_menu_js():
-    """JavaScript para capturar mensagens do componente"""
-    return """
-<script>
-// Captura mensagens do componente HTML
-window.addEventListener('message', function(event) {
-    // Verifica se a mensagem é do tipo esperado
-    if (event.data.type === 'streamlit:setComponentValue') {
-        // Envia os dados para o Streamlit via Session State
-        const data = event.data.value;
-        
-        // Usa o Streamlit API para setar o session state
-        Streamlit.setComponentValue(data);
-    }
-});
-</script>
-"""
+    # Botões de ação
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📸 Tirar Snapshot", use_container_width=True):
+            try:
+                version_name = take_snapshot(st.session_state.df, selected_empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+    
+    with col2:
+        if st.button("🔄 Restaurar Snapshot", use_container_width=True):
+            st.info("🔧 Funcionalidade em desenvolvimento")
+            # Aqui você pode adicionar a lógica para restaurar snapshots
+    
+    with col3:
+        if st.button("🗑️ Gerenciar Snapshots", use_container_width=True):
+            st.session_state.show_snapshot_management = not st.session_state.get('show_snapshot_management', False)
+            st.rerun()
 
 # --- Visualização de Comparação de Período ---
 
@@ -397,6 +307,47 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
     
     st.dataframe(df_final, use_container_width=True)
 
+# --- Gerenciamento de Snapshots ---
+
+def display_snapshot_management(selected_empreendimento, snapshots):
+    st.subheader("💾 Gerenciamento de Snapshots")
+    
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    
+    if not empreendimento_snapshots:
+        st.info("Nenhum snapshot disponível para este empreendimento.")
+        return
+    
+    for version_name in sorted(empreendimento_snapshots.keys()):
+        with st.expander(f"📁 {version_name}"):
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                st.write(f"**Data de criação:** {empreendimento_snapshots[version_name]['date']}")
+                st.write(f"**Total de tarefas:** {len(empreendimento_snapshots[version_name]['data'])}")
+            
+            with col2:
+                if st.button("🔍 Visualizar", key=f"view_{version_name}"):
+                    st.session_state[f"view_snapshot_{version_name}"] = True
+            
+            with col3:
+                if st.button("🗑️ Deletar", key=f"del_{version_name}"):
+                    if delete_snapshot(selected_empreendimento, version_name):
+                        st.success(f"✅ {version_name} deletado!")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Erro ao deletar {version_name}")
+            
+            # Visualização do snapshot
+            if st.session_state.get(f"view_snapshot_{version_name}", False):
+                snapshot_data = empreendimento_snapshots[version_name]['data']
+                df_snapshot = pd.DataFrame(snapshot_data)
+                st.dataframe(df_snapshot, use_container_width=True)
+                
+                if st.button("Fechar Visualização", key=f"close_{version_name}"):
+                    st.session_state[f"view_snapshot_{version_name}"] = False
+                    st.rerun()
+
 # --- Aplicação Principal ---
 
 def main():
@@ -404,31 +355,31 @@ def main():
     st.title("📊 Gráfico de Gantt com Versionamento")
     
     # Inicialização
-    create_snapshots_table()
-    
-    # Dados
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
+    
+    create_snapshots_table()
     
     df = st.session_state.df
     snapshots = load_snapshots()
     
     # Sidebar
+    st.sidebar.header("🔧 Configurações")
     empreendimentos = df['Empreendimento'].unique().tolist()
     selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
     df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
     
-    # Botões de ação na sidebar
+    # Ações rápidas na sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📸 Ações Rápidas")
+    st.sidebar.subheader("⚡ Ações Rápidas")
     
-    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True):
+    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True, type="primary"):
         try:
             version_name = take_snapshot(df, selected_empreendimento)
-            st.success(f"✅ {version_name} criado!")
+            st.sidebar.success(f"✅ {version_name} criado!")
             st.rerun()
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.sidebar.error(f"❌ Erro: {e}")
     
     if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
         st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
@@ -438,72 +389,32 @@ def main():
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("Dados do Projeto")
+        st.subheader("📋 Dados do Projeto")
         st.dataframe(df_filtered, use_container_width=True)
     
     with col2:
-        st.subheader("Snapshots")
+        st.subheader("💾 Snapshots")
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         if empreendimento_snapshots:
             for version in sorted(empreendimento_snapshots.keys()):
-                st.write(f"• {version}")
+                st.write(f"• **{version}**")
+                st.caption(f"Criado em: {empreendimento_snapshots[version]['date']}")
         else:
-            st.info("Nenhum snapshot")
+            st.info("ℹ️ Nenhum snapshot disponível")
     
-    # Menu de contexto - usando component_value para capturar ações
-    st.markdown("---")
-    st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    # Menu de contexto simplificado
+    create_simple_context_menu(selected_empreendimento)
     
-    # Componente HTML principal
-    context_menu_html = create_context_menu(selected_empreendimento)
-    html(context_menu_html, height=350)
-    
-    # JavaScript para capturar mensagens
-    html(context_menu_js())
-    
-    # Processa ações do menu usando component_value
-    if 'component_value' in st.session_state and st.session_state.component_value:
-        action_data = st.session_state.component_value
-        action = action_data.get('action')
-        empreendimento = action_data.get('empreendimento')
-        
-        # Limpa o valor imediatamente
-        st.session_state.component_value = None
-        
-        if action and empreendimento:
-            if action == 'take_snapshot':
-                try:
-                    version_name = take_snapshot(df, empreendimento)
-                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erro ao criar snapshot: {e}")
-            elif action == 'restore_snapshot':
-                st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
-            elif action == 'delete_snapshot':
-                st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+    # Gerenciamento de snapshots
+    if st.session_state.get('show_snapshot_management', False):
+        st.markdown("---")
+        display_snapshot_management(selected_empreendimento, snapshots)
     
     # Comparação de períodos
     if st.session_state.get('show_comparison', False):
         st.markdown("---")
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         display_period_comparison(df_filtered, empreendimento_snapshots)
-    
-    # Gerenciamento de snapshots na sidebar
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
-    
-    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-    if empreendimento_snapshots:
-        for version_name in sorted(empreendimento_snapshots.keys()):
-            col1, col2 = st.sidebar.columns([3, 1])
-            with col1:
-                st.write(f"`{version_name}`")
-            with col2:
-                if st.button("🗑️", key=f"del_{version_name}"):
-                    if delete_snapshot(selected_empreendimento, version_name):
-                        st.success(f"✅ {version_name} deletado!")
-                        st.rerun()
 
 if __name__ == "__main__":
     main()
