@@ -8,15 +8,24 @@ import urllib.parse
 from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
-# ATENÇÃO: As credenciais reais estão em st.secrets e não estão visíveis aqui.
-# Mantendo a estrutura para simulação.
-DB_CONFIG = {
-    'host': st.secrets.get("aws_db", {}).get("host", "mock_host"),
-    'user': st.secrets.get("aws_db", {}).get("user", "mock_user"),
-    'password': st.secrets.get("aws_db", {}).get("password", "mock_password"),
-    'database': st.secrets.get("aws_db", {}).get("database", "mock_db"),
-    'port': 3306
-}
+# Usando try/except para carregar st.secrets e garantir que o mock funcione se o secrets.toml não existir.
+try:
+    DB_CONFIG = {
+        'host': st.secrets["aws_db"]["host"],
+        'user': st.secrets["aws_db"]["user"],
+        'password': st.secrets["aws_db"]["password"],
+        'database': st.secrets["aws_db"]["database"],
+        'port': 3306
+    }
+except Exception:
+    # Configuração de mock para garantir que o aplicativo inicie
+    DB_CONFIG = {
+        'host': "mock_host",
+        'user': "mock_user",
+        'password': "mock_password",
+        'database': "mock_db",
+        'port': 3306
+    }
 
 # --- Funções de Banco de Dados (Mock para simulação) ---
 
@@ -258,11 +267,11 @@ def inject_js_context_menu(gantt_area_html, selected_empreendimento):
     """
     
     # 1. Carrega o CSS
-    with open("/home/ubuntu/circular_menu.css", "r") as f:
+    with open("circular_menu.css", "r") as f:
         css_code = f.read()
     
     # 2. Carrega o JS
-    with open("/home/ubuntu/circular_menu.js", "r") as f:
+    with open("circular_menu.js", "r") as f:
         js_code = f.read()
         
     # 3. Combina CSS e JS em um único bloco HTML
@@ -404,10 +413,10 @@ def main():
     create_snapshots_table()
 
     # 1. Verifica se há parâmetros de ação na URL
-    query_params = st.experimental_get_query_params()
-    take_snapshot_param = query_params.get('take_snapshot', [''])[0]
-    view_period_param = query_params.get('view_period', [''])[0]
-    empreendimento_param = query_params.get('empreendimento', [''])[0]
+    query_params = st.query_params
+    take_snapshot_param = st.query_params.get('take_snapshot')
+    view_period_param = st.query_params.get('view_period')
+    empreendimento_param = st.query_params.get('empreendimento')
     
     # 2. Inicialização e Carregamento de Dados
     if 'df' not in st.session_state:
@@ -432,23 +441,23 @@ def main():
             # Garante que o empreendimento selecionado na sidebar é o mesmo da URL
             if selected_empreendimento_url == selected_empreendimento:
                 new_version_name = take_snapshot(df, selected_empreendimento)
-                st.experimental_set_query_params() # Limpa os parâmetros da URL
+                st.query_params.clear() # Limpa os parâmetros da URL
                 st.success(f"✅ Snapshot '{new_version_name}' criado com sucesso no banco AWS!")
                 st.rerun()
             else:
                 st.error("Erro: Empreendimento na URL não corresponde ao selecionado.")
-                st.experimental_set_query_params()
+                st.query_params.clear()
                 st.rerun()
             
         except Exception as e:
             st.error(f"❌ Erro ao criar snapshot: {e}")
-            st.experimental_set_query_params()
+            st.query_params.clear()
             st.rerun()
             
     # 4. Processa a visualização de período se solicitada via URL
     if view_period_param == 'true' and empreendimento_param:
         # Limpa os parâmetros da URL para evitar loop de reruns
-        st.experimental_set_query_params()
+        st.query_params.clear()
         st.session_state.show_period_comparison = True
         st.rerun()
     
