@@ -4,7 +4,6 @@ import json
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
-import urllib.parse
 from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
@@ -205,7 +204,7 @@ def take_snapshot(df, empreendimento):
 # --- Solução Corrigida para Menu de Contexto ---
 
 def create_context_menu(selected_empreendimento):
-    """Cria um menu de contexto usando a API de query parameters do Streamlit"""
+    """Cria um menu de contexto usando comunicação direta com Streamlit"""
     
     html_code = f"""
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
@@ -253,19 +252,17 @@ document.body.appendChild(menu);
 function handleMenuAction(action) {{
     hideMenu();
     
-    // Usa a API do Streamlit para atualizar os query parameters
-    const queryParams = new URLSearchParams(window.location.search);
-    queryParams.set('snapshot_action', action);
-    queryParams.set('empreendimento', '{selected_empreendimento}');
+    // Envia mensagem para o Streamlit
+    window.parent.postMessage({{
+        type: 'streamlit:setComponentValue',
+        value: {{
+            action: action,
+            empreendimento: '{selected_empreendimento}',
+            timestamp: new Date().getTime()
+        }}
+    }}, '*');
     
-    // Atualiza a URL sem recarregar a página
-    window.history.replaceState({{}}, '', '?' + queryParams.toString());
-    
-    // Dispara um evento customizado que o Streamlit pode detectar
-    const event = new CustomEvent('streamlit:setQueryParams', {{
-        detail: {{ queryParams: queryParams.toString() }}
-    }});
-    window.dispatchEvent(event);
+    console.log('Ação enviada:', action, 'para:', '{selected_empreendimento}');
 }}
 
 function showMenu(x, y) {{
@@ -296,6 +293,9 @@ document.addEventListener('keydown', function(e) {{
         hideMenu();
     }}
 }});
+
+// Log para debug
+console.log('Menu de contexto carregado para:', '{selected_empreendimento}');
 </script>
 """
     return html_code
@@ -303,29 +303,49 @@ document.addEventListener('keydown', function(e) {{
 # --- Função para processar ações do menu ---
 
 def process_snapshot_actions():
-    """Processa ações do menu de contexto via query parameters"""
-    query_params = st.query_params
-    
-    action = query_params.get('snapshot_action')
-    empreendimento = query_params.get('empreendimento')
-    
-    if action and empreendimento:
-        # Limpa os parâmetros
-        st.query_params.clear()
+    """Processa ações do menu de contexto via session_state"""
+    if 'context_menu_action' in st.session_state:
+        action_data = st.session_state.context_menu_action
+        action = action_data.get('action')
+        empreendimento = action_data.get('empreendimento')
         
-        df = create_mock_dataframe()
+        # Limpa a ação imediatamente
+        del st.session_state.context_menu_action
         
-        if action == 'take_snapshot':
-            try:
-                version_name = take_snapshot(df, empreendimento)
-                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot: {e}")
-        elif action == 'restore_snapshot':
-            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
-        elif action == 'delete_snapshot':
-            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+        if action and empreendimento:
+            df = st.session_state.df
+            
+            if action == 'take_snapshot':
+                try:
+                    version_name = take_snapshot(df, empreendimento)
+                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao criar snapshot: {e}")
+            elif action == 'restore_snapshot':
+                st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+            elif action == 'delete_snapshot':
+                st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+
+# --- JavaScript para capturar mensagens ---
+
+def context_menu_js():
+    """JavaScript para capturar mensagens do componente"""
+    return """
+<script>
+// Captura mensagens do componente HTML
+window.addEventListener('message', function(event) {
+    // Verifica se a mensagem é do tipo esperado
+    if (event.data.type === 'streamlit:setComponentValue') {
+        // Envia os dados para o Streamlit via Session State
+        const data = event.data.value;
+        
+        // Usa o Streamlit API para setar o session state
+        Streamlit.setComponentValue(data);
+    }
+});
+</script>
+"""
 
 # --- Visualização de Comparação de Período ---
 
@@ -386,9 +406,6 @@ def main():
     # Inicialização
     create_snapshots_table()
     
-    # Processa ações do menu primeiro
-    process_snapshot_actions()
-    
     # Dados
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
@@ -433,11 +450,38 @@ def main():
         else:
             st.info("Nenhum snapshot")
     
-    # Menu de contexto
+    # Menu de contexto - usando component_value para capturar ações
     st.markdown("---")
     st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    
+    # Componente HTML principal
     context_menu_html = create_context_menu(selected_empreendimento)
     html(context_menu_html, height=350)
+    
+    # JavaScript para capturar mensagens
+    html(context_menu_js())
+    
+    # Processa ações do menu usando component_value
+    if 'component_value' in st.session_state and st.session_state.component_value:
+        action_data = st.session_state.component_value
+        action = action_data.get('action')
+        empreendimento = action_data.get('empreendimento')
+        
+        # Limpa o valor imediatamente
+        st.session_state.component_value = None
+        
+        if action and empreendimento:
+            if action == 'take_snapshot':
+                try:
+                    version_name = take_snapshot(df, empreendimento)
+                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao criar snapshot: {e}")
+            elif action == 'restore_snapshot':
+                st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+            elif action == 'delete_snapshot':
+                st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
     
     # Comparação de períodos
     if st.session_state.get('show_comparison', False):
