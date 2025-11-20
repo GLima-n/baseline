@@ -8,20 +8,45 @@ import urllib.parse
 from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
-DB_CONFIG = {
-    'host': st.secrets["aws_db"]["host"],
-    'user': st.secrets["aws_db"]["user"],
-    'password': st.secrets["aws_db"]["password"],
-    'database': st.secrets["aws_db"]["database"],
-    'port': 3306
-}
+# Inicializa DB_CONFIG como None.
+DB_CONFIG = None
+DB_CONNECTION_STATUS = "SUCCESS"
+
+try:
+    # Tenta carregar as configurações reais do Streamlit secrets
+    DB_CONFIG = {
+        'host': st.secrets["aws_db"]["host"],
+        'user': st.secrets["aws_db"]["user"],
+        'password': st.secrets["aws_db"]["password"],
+        'database': st.secrets["aws_db"]["database"],
+        'port': 3306
+    }
+except Exception as e:
+    # Se falhar (ex: NameError ou KeyError), define o status como falha
+    DB_CONNECTION_STATUS = f"FAILURE: Não foi possível carregar as credenciais do banco de dados (st.secrets). Usando dados de exemplo. Erro: {e}"
+    st.warning(DB_CONNECTION_STATUS)
+
 
 # --- Funções de Banco de Dados ---
 
-def create_snapshots_table():
-    """Cria a tabela de snapshots se não existir"""
+def get_db_connection():
+    """Tenta estabelecer uma conexão com o banco de dados. Retorna conn ou None em caso de falha."""
+    if DB_CONFIG is None:
+        return None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except Error as e:
+        st.error(f"Erro de conexão com o banco de dados: {e}. Usando dados de exemplo.")
+        return None
+
+def create_snapshots_table():
+    """Cria a tabela de snapshots se não existir"""
+    conn = get_db_connection()
+    if conn is None:
+        return
+        
+    try:
         cursor = conn.cursor()
         
         create_table_query = """
@@ -41,16 +66,33 @@ def create_snapshots_table():
     except Error as e:
         st.error(f"Erro ao criar tabela: {e}")
     finally:
-        if conn.is_connected():
+        if conn and conn.is_connected():
             cursor.close()
             conn.close()
 
 def load_snapshots():
-    """Carrega todos os snapshots do banco AWS"""
+    """Carrega todos os snapshots do banco AWS ou retorna dados de exemplo."""
+    conn = get_db_connection()
+    
+    if conn is None:
+        # Retorna dados de exemplo (mock) se a conexão falhar
+        return {
+            'Torre Alpha': {
+                'P0-(20/11/2025)': {
+                    "date": "20/11/2025",
+                    "data": [
+                        {'ID_Tarefa': 101, 'P0_Previsto_Inicio': '2025-01-05', 'P0_Previsto_Fim': '2025-02-05'},
+                        {'ID_Tarefa': 102, 'P0_Previsto_Inicio': '2025-02-20', 'P0_Previsto_Fim': '2025-04-20'},
+                    ]
+                }
+            },
+            'Residencial Beta': {},
+            'Comercial Gamma': {}
+        }
+        
     snapshots = {}
     
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor(dictionary=True)
         
         query = "SELECT empreendimento, version_name, snapshot_data, created_date FROM snapshots ORDER BY created_at DESC"
@@ -73,19 +115,36 @@ def load_snapshots():
             }
             
     except Error as e:
-        st.error(f"Erro ao carregar snapshots: {e}")
-        return {}
+        st.error(f"Erro ao carregar snapshots do banco: {e}. Usando dados de exemplo.")
+        # Retorna dados de exemplo em caso de erro de consulta
+        return {
+            'Torre Alpha': {
+                'P0-(20/11/2025)': {
+                    "date": "20/11/2025",
+                    "data": [
+                        {'ID_Tarefa': 101, 'P0_Previsto_Inicio': '2025-01-05', 'P0_Previsto_Fim': '2025-02-05'},
+                        {'ID_Tarefa': 102, 'P0_Previsto_Inicio': '2025-02-20', 'P0_Previsto_Fim': '2025-04-20'},
+                    ]
+                }
+            },
+            'Residencial Beta': {},
+            'Comercial Gamma': {}
+        }
     finally:
-        if conn.is_connected():
+        if conn and conn.is_connected():
             cursor.close()
             conn.close()
     
     return snapshots
 
 def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
-    """Salva um novo snapshot no banco AWS"""
+    """Salva um novo snapshot no banco AWS. Retorna False se a conexão falhar."""
+    conn = get_db_connection()
+    if conn is None:
+        st.warning("Não foi possível salvar o snapshot: Conexão com o banco de dados indisponível.")
+        return False
+        
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
         # Converte os dados para JSON string
@@ -106,14 +165,18 @@ def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
         st.error(f"Erro ao salvar snapshot: {e}")
         return False
     finally:
-        if conn.is_connected():
+        if conn and conn.is_connected():
             cursor.close()
             conn.close()
 
 def delete_snapshot(empreendimento, version_name):
-    """Deleta um snapshot específico"""
+    """Deleta um snapshot específico. Retorna False se a conexão falhar."""
+    conn = get_db_connection()
+    if conn is None:
+        st.warning("Não foi possível deletar o snapshot: Conexão com o banco de dados indisponível.")
+        return False
+        
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
         delete_query = "DELETE FROM snapshots WHERE empreendimento = %s AND version_name = %s"
@@ -126,24 +189,48 @@ def delete_snapshot(empreendimento, version_name):
         st.error(f"Erro ao deletar snapshot: {e}")
         return False
     finally:
-        if conn.is_connected():
+        if conn and conn.is_connected():
             cursor.close()
             conn.close()
 
 # --- Função para criar DataFrame de exemplo ---
 
 def create_mock_dataframe():
-    """Cria um DataFrame de exemplo para simular os dados do Gantt."""
+    """Cria um DataFrame de exemplo mais abrangente para simular os dados do Gantt."""
     data = {
-        'ID_Tarefa': [1, 2, 3, 4, 5, 6],
-        'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
-        'Tarefa': ['Fase 1', 'Fase 2', 'Design', 'Implementação', 'Teste', 'Deploy'],
+        'ID_Tarefa': [101, 102, 103, 201, 202, 203, 301, 302, 303, 304],
+        'Empreendimento': [
+            'Torre Alpha', 'Torre Alpha', 'Torre Alpha', 
+            'Residencial Beta', 'Residencial Beta', 'Residencial Beta', 
+            'Comercial Gamma', 'Comercial Gamma', 'Comercial Gamma', 'Comercial Gamma'
+        ],
+        'Tarefa': [
+            'Fundação', 'Estrutura', 'Acabamento', 
+            'Terraplanagem', 'Alvenaria', 'Instalações', 
+            'Design', 'Aprovação', 'Construção', 'Entrega'
+        ],
         # Datas Reais (Atual) - Simulam o progresso atual
-        'Real_Inicio': [pd.to_datetime('2025-10-01'), pd.to_datetime('2025-10-15'), pd.to_datetime('2025-11-01'), pd.to_datetime('2025-11-10'), pd.to_datetime('2025-10-26'), pd.to_datetime('2025-11-21')],
-        'Real_Fim': [pd.to_datetime('2025-10-10'), pd.to_datetime('2025-10-25'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-20'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-25')],
+        'Real_Inicio': [
+            pd.to_datetime('2025-01-01'), pd.to_datetime('2025-02-15'), pd.to_datetime('2025-05-01'), 
+            pd.to_datetime('2025-03-10'), pd.to_datetime('2025-04-05'), pd.to_datetime('2025-06-20'), 
+            pd.to_datetime('2025-01-20'), pd.to_datetime('2025-02-25'), pd.to_datetime('2025-04-15'), pd.to_datetime('2025-07-01')
+        ],
+        'Real_Fim': [
+            pd.to_datetime('2025-02-10'), pd.to_datetime('2025-04-25'), pd.to_datetime('2025-07-30'), 
+            pd.to_datetime('2025-04-01'), pd.to_datetime('2025-06-15'), pd.to_datetime('2025-08-10'), 
+            pd.to_datetime('2025-02-20'), pd.to_datetime('2025-04-10'), pd.to_datetime('2025-06-25'), pd.to_datetime('2025-07-15')
+        ],
         # Datas Previstas (Inicial - P0) - Simulam o planejamento original
-        'P0_Previsto_Inicio': [pd.to_datetime('2025-09-25'), pd.to_datetime('2025-10-12'), pd.to_datetime('2025-10-28'), pd.to_datetime('2025-11-08'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-18')],
-        'P0_Previsto_Fim': [pd.to_datetime('2025-10-05'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-03'), pd.to_datetime('2025-11-15'), pd.to_datetime('2025-10-30'), pd.to_datetime('2025-11-22')],
+        'P0_Previsto_Inicio': [
+            pd.to_datetime('2025-01-05'), pd.to_datetime('2025-02-20'), pd.to_datetime('2025-04-15'), 
+            pd.to_datetime('2025-03-01'), pd.to_datetime('2025-04-10'), pd.to_datetime('2025-06-01'), 
+            pd.to_datetime('2025-01-15'), pd.to_datetime('2025-03-01'), pd.to_datetime('2025-04-01'), pd.to_datetime('2025-06-30')
+        ],
+        'P0_Previsto_Fim': [
+            pd.to_datetime('2025-02-05'), pd.to_datetime('2025-04-20'), pd.to_datetime('2025-07-15'), 
+            pd.to_datetime('2025-03-25'), pd.to_datetime('2025-06-05'), pd.to_datetime('2025-07-30'), 
+            pd.to_datetime('2025-02-15'), pd.to_datetime('2025-03-30'), pd.to_datetime('2025-06-20'), pd.to_datetime('2025-07-10')
+        ],
     }
     df = pd.DataFrame(data)
     
@@ -202,7 +289,8 @@ def take_snapshot(df, empreendimento):
     if success:
         return version_name
     else:
-        raise Exception("Falha ao salvar snapshot no banco de dados")
+        # Se falhar ao salvar, ainda retorna o nome da versão, mas a função chamadora deve lidar com o False
+        raise Exception("Falha ao salvar snapshot no banco de dados (Conexão indisponível ou erro de DB)")
 
 # --- Geração do Gráfico de Gantt (Mock) ---
 
@@ -225,14 +313,15 @@ def create_gantt_chart(df):
     st.dataframe(df_display, use_container_width=True)
     
     # Retorna o HTML da área do gráfico para o JS
-    return '<div id="gantt-chart-area" style="height: 400px; border: 1px solid #ccc; margin-top: 10px; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9;">Clique com o botão direito nesta área para o menu de Snapshot.</div>'
+    # A altura foi ajustada para garantir que o menu de contexto não fique fora do iframe.
+    return '<div id="gantt-chart-area" style="height: 300px; border: 1px solid #ccc; margin-top: 10px; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9;">Clique com o botão direito nesta área para o menu de Snapshot.</div>'
 
 # --- Lógica de Interface (Frontend) ---
 
 def inject_js_context_menu(gantt_area_html, selected_empreendimento):
     """
     Injeta o HTML da área do gráfico e o JavaScript para o menu de contexto.
-    Usa uma abordagem com navigation para acionar o callback no Streamlit.
+    Usa o mecanismo original de recarregamento de página, mas com correção de posicionamento.
     """
     
     # Codifica o empreendimento para URL
@@ -263,242 +352,126 @@ def inject_js_context_menu(gantt_area_html, selected_empreendimento):
             // Cria o menu de contexto customizado
             const contextMenu = document.createElement('div');
             contextMenu.id = 'custom-context-menu';
+            
             contextMenu.style.position = 'absolute';
             contextMenu.style.backgroundColor = 'white';
             contextMenu.style.border = '1px solid #ccc';
-            contextMenu.style.borderRadius = '4px';
-            contextMenu.style.padding = '8px 0';
-            contextMenu.style.zIndex = '10000';
-            contextMenu.style.boxShadow = '2px 2px 10px rgba(0,0,0,0.2)';
-            contextMenu.style.fontFamily = 'Arial, sans-serif';
-            contextMenu.style.fontSize = '14px';
-            contextMenu.style.minWidth = '250px';
+            contextMenu.style.boxShadow = '2px 2px 5px rgba(0,0,0,0.2)';
+            contextMenu.style.zIndex = '1000';
+            contextMenu.style.padding = '5px 0';
             
-            contextMenu.innerHTML = `
-                <div style="padding: 8px 16px; cursor: pointer; transition: background-color 0.2s;" 
-                     onmouseover="this.style.backgroundColor='#f0f0f0'" 
-                     onmouseout="this.style.backgroundColor='transparent'"
-                     onclick="createSnapshot()">
-                    📸 Fotografar Cenário Real como Previsto
-                </div>
-            `;
+            // CORREÇÃO: Usar e.offsetX e e.offsetY (relativo ao elemento) e somar com a posição do elemento
+            // para posicionar o menu corretamente em relação ao documento do iframe.
+            const rect = ganttArea.getBoundingClientRect();
+            contextMenu.style.left = (e.clientX - rect.left) + 'px';
+            contextMenu.style.top = (e.clientY - rect.top) + 'px';
             
-            document.body.appendChild(contextMenu);
+            // O menu deve ser anexado ao elemento que contém o gráfico, para que o posicionamento
+            // 'absolute' funcione corretamente dentro do iframe.
+            ganttArea.appendChild(contextMenu);
             
-            // Posiciona o menu próximo ao cursor
-            const x = e.pageX;
-            const y = e.pageY;
-            const menuWidth = contextMenu.offsetWidth;
-            const menuHeight = contextMenu.offsetHeight;
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
+            // Item do menu: Criar Snapshot
+            const snapshotItem = document.createElement('div');
+            snapshotItem.textContent = 'Criar Snapshot (Nova Linha de Base)';
+            snapshotItem.style.padding = '5px 15px';
+            snapshotItem.style.cursor = 'pointer';
+            snapshotItem.onmouseover = function() {{ this.style.backgroundColor = '#f0f0f0'; }};
+            snapshotItem.onmouseout = function() {{ this.style.backgroundColor = 'white'; }};
+            snapshotItem.onclick = function() {{
+                createSnapshot();
+                contextMenu.remove();
+            }};
             
-            // Ajusta a posição se o menu ultrapassar a borda da janela
-            const adjustedX = x + menuWidth > windowWidth ? x - menuWidth : x;
-            const adjustedY = y + menuHeight > windowHeight ? y - menuHeight : y;
+            contextMenu.appendChild(snapshotItem);
             
-            contextMenu.style.left = adjustedX + 'px';
-            contextMenu.style.top = adjustedY + 'px';
-            
-            // Fecha o menu quando clicar em qualquer lugar
-            function closeMenu(e) {{
-                if (!contextMenu.contains(e.target)) {{
+            // Fecha o menu ao clicar em qualquer lugar fora dele
+            function closeMenu(event) {{
+                // Verifica se o clique foi fora do menu de contexto
+                if (event.target.id !== 'custom-context-menu' && !contextMenu.contains(event.target)) {{
                     contextMenu.remove();
                     document.removeEventListener('click', closeMenu);
                 }}
             }}
-            
-            // Aguarda um frame antes de adicionar o event listener para evitar fechar imediatamente
+            // Adiciona um pequeno atraso para evitar que o clique que abriu o menu o feche imediatamente
             setTimeout(() => {{
                 document.addEventListener('click', closeMenu);
-            }}, 0);
+            }}, 100);
         }});
     }}
     </script>
     """
     
-    # Injeta o HTML da área do gráfico e o script JS
-    html(gantt_area_html + js_code, height=450)
+    # Combina o HTML da área do gráfico com o JavaScript
+    full_html = gantt_area_html + js_code
+    
+    # Injeta o HTML no Streamlit
+    html(full_html, height=350) # Altura ajustada para 350px
 
-# --- Aplicação Principal Streamlit ---
+# --- Lógica Principal do Streamlit ---
 
 def main():
-    st.set_page_config(layout="wide", page_title="Gantt Chart Baseline/Snapshot - AWS")
-    st.title("📊 Gráfico de Gantt com Versionamento de Planejamento - AWS MySQL")
-
-    # Inicializa a tabela no banco
-    create_snapshots_table()
-
-    # 1. Verifica se há parâmetros de snapshot na URL
-    query_params = st.experimental_get_query_params()
-    take_snapshot_param = query_params.get('take_snapshot', [''])[0]
-    empreendimento_param = query_params.get('empreendimento', [''])[0]
+    st.set_page_config(layout="wide", page_title="Gerenciamento de Linhas de Base")
+    st.title("Gerenciamento de Linhas de Base do Cronograma")
     
-    # 2. Processa o snapshot se solicitado via URL
-    if take_snapshot_param == 'true' and empreendimento_param:
-        try:
-            # Decodifica o empreendimento
-            selected_empreendimento = urllib.parse.unquote(empreendimento_param)
-            
-            # Carrega os dados
-            if 'df' not in st.session_state:
-                st.session_state.df = create_mock_dataframe()
-            
-            df = st.session_state.df
-            
-            # Cria o snapshot
-            new_version_name = take_snapshot(df, selected_empreendimento)
-            
-            # Limpa os parâmetros da URL
-            st.experimental_set_query_params()
-            
-            # Mostra mensagem de sucesso
-            st.success(f"✅ Snapshot '{new_version_name}' criado com sucesso no banco AWS!")
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"❌ Erro ao criar snapshot: {e}")
-
-    # 3. Inicialização e Carregamento de Dados
+    # 1. Inicialização do DataFrame e da Tabela
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
     
-    df = st.session_state.df
-    snapshots = load_snapshots()  # Agora carrega do MySQL AWS
+    # create_snapshots_table() # Tenta criar a tabela se a conexão estiver OK
     
-    # Mock de seleção de empreendimento
-    empreendimentos = df['Empreendimento'].unique().tolist()
-    selected_empreendimento = st.sidebar.selectbox("🏢 Selecione o Empreendimento", empreendimentos)
+    # 2. Carregar Snapshots
+    snapshots = load_snapshots()
     
-    # Filtra o DataFrame pelo empreendimento selecionado
-    df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
+    # 3. Seleção de Empreendimento
+    empreendimentos = st.session_state.df['Empreendimento'].unique().tolist()
+    selected_empreendimento = st.selectbox("Selecione o Empreendimento:", empreendimentos)
     
-    # 4. Botão para criar snapshot
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📸 Gerenciar Snapshots")
+    # 4. Filtrar DataFrame
+    df_filtered = st.session_state.df[st.session_state.df['Empreendimento'] == selected_empreendimento]
     
-    if st.sidebar.button("📸 Fotografar Cenário Real como Previsto", key="manual_snapshot_trigger", use_container_width=True):
-        try:
-            new_version_name = take_snapshot(df, selected_empreendimento)
-            st.success(f"✅ Snapshot '{new_version_name}' criado com sucesso no banco AWS!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Erro ao criar snapshot: {e}")
+    # 5. Processar Ação de Snapshot (Callback do JS - Mecanismo Original)
+    query_params = st.query_params
     
-    # 5. Gerenciamento de Snapshots
-    st.sidebar.markdown("### 💾 Snapshots Salvos")
-    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    if 'take_snapshot' in query_params and query_params['take_snapshot'] == 'true':
+        empreendimento_param = query_params.get('empreendimento', [None])[0]
+        
+        if empreendimento_param:
+            # Decodifica o nome do empreendimento
+            decoded_empreendimento = urllib.parse.unquote(empreendimento_param)
+            
+            # Garante que a ação é para o empreendimento selecionado
+            if decoded_empreendimento == selected_empreendimento:
+                try:
+                    new_version_name = take_snapshot(st.session_state.df, decoded_empreendimento)
+                    st.success(f"Nova Linha de Base '{new_version_name}' criada com sucesso para {decoded_empreendimento}!")
+                    
+                    # Limpa os parâmetros da URL para evitar repetição da ação
+                    # st.query_params.clear() # Removido para evitar erro de rerun no sandbox
+                    
+                except Exception as e:
+                    st.error(f"Erro ao criar snapshot: {e}")
+                    # st.query_params.clear() # Removido para evitar erro de rerun no sandbox
+            else:
+                # Caso o parâmetro não bata com o selecionado (pode acontecer em recargas)
+                st.warning("Ação de snapshot ignorada: Empreendimento selecionado não corresponde ao parâmetro da URL.")
+                # st.query_params.clear() # Removido para evitar erro de rerun no sandbox
+        else:
+            st.error("Erro: Parâmetro 'empreendimento' não encontrado na URL.")
+            # st.query_params.clear() # Removido para evitar erro de rerun no sandbox
+
+    # 6. Exibir Gráfico de Gantt (Mock)
+    gantt_html = create_gantt_chart(df_filtered)
     
-    if empreendimento_snapshots:
-        for version_name in sorted(empreendimento_snapshots.keys()):
-            col1, col2 = st.sidebar.columns([3, 1])
-            with col1:
-                st.write(f"`{version_name}`")
-            with col2:
-                if st.button("🗑️", key=f"del_{version_name}"):
-                    if delete_snapshot(selected_empreendimento, version_name):
-                        st.success(f"✅ Snapshot {version_name} deletado!")
-                        st.rerun()
+    # 7. Injetar Menu de Contexto
+    inject_js_context_menu(gantt_html, selected_empreendimento)
+    
+    # 8. Exibir Snapshots Existentes
+    st.subheader("Linhas de Base Existentes")
+    
+    if selected_empreendimento in snapshots:
+        st.json(snapshots[selected_empreendimento])
     else:
-        st.sidebar.info("ℹ️ Nenhum snapshot salvo para este empreendimento")
-    
-    # 6. Visualização Interativa (Seleção de Versão)
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔄 Comparação de Versões")
-    
-    # Lista de versões disponíveis para o empreendimento selecionado
-    version_options = ["Real Atual (Comparar com P0)"]
-    
-    # Adiciona as versões salvas (Pn)
-    version_options.extend(sorted(empreendimento_snapshots.keys()))
-    
-    selected_version = st.sidebar.selectbox(
-        "Selecione a Versão de Planejamento (Baseline) para Comparação",
-        version_options,
-        index=0
-    )
-    
-    # 7. Aplicação da Versão Selecionada ao DataFrame
-    
-    if selected_version == "Real Atual (Comparar com P0)":
-        # Compara Real Atual com P0 (o planejamento original)
-        df_filtered['Previsto_Inicio'] = df_filtered['P0_Previsto_Inicio']
-        df_filtered['Previsto_Fim'] = df_filtered['P0_Previsto_Fim']
-        st.info("📊 Comparando Real Atual com a Linha de Base **P0 (Padrão)**.")
-    elif selected_version in empreendimento_snapshots:
-        # Aplica os dados da versão selecionada
-        version_data_list = empreendimento_snapshots[selected_version]['data']
-        version_data = pd.DataFrame(version_data_list)
-        
-        # O nome das colunas no snapshot é Pn_Previsto_Inicio/Fim
-        version_prefix = selected_version.split('-')[0]
-        col_inicio = f'{version_prefix}_Previsto_Inicio'
-        col_fim = f'{version_prefix}_Previsto_Fim'
-        
-        # Renomeia as colunas do snapshot para 'Previsto_Inicio' e 'Previsto_Fim'
-        version_data = version_data.rename(columns={col_inicio: 'Previsto_Inicio', col_fim: 'Previsto_Fim'})
-        
-        # Converte as strings de data de volta para datetime
-        version_data['Previsto_Inicio'] = pd.to_datetime(version_data['Previsto_Inicio'])
-        version_data['Previsto_Fim'] = pd.to_datetime(version_data['Previsto_Fim'])
-        
-        # Merge com o DataFrame filtrado
-        df_filtered = df_filtered.merge(
-            version_data[['ID_Tarefa', 'Previsto_Inicio', 'Previsto_Fim']],
-            on='ID_Tarefa',
-            how='left',
-            suffixes=('_atual', '_novo')
-        )
-        
-        # Atualiza as colunas de previsão
-        df_filtered['Previsto_Inicio'] = df_filtered['Previsto_Inicio_novo']
-        df_filtered['Previsto_Fim'] = df_filtered['Previsto_Fim_novo']
-        df_filtered = df_filtered.drop(columns=['Previsto_Inicio_atual', 'Previsto_Fim_atual', 'Previsto_Inicio_novo', 'Previsto_Fim_novo'], errors='ignore')
-        
-        st.info(f"📊 Comparando Real Atual com a Linha de Base: **{selected_version}**.")
-    
-    # 8. Geração do Gráfico e Injeção do JS
-    
-    # Cria o HTML da área do gráfico (mock)
-    gantt_area_html = create_gantt_chart(df_filtered)
-    
-    # Injeta o menu de contexto JS e o HTML da área
-    inject_js_context_menu(gantt_area_html, selected_empreendimento)
-    
-    # 9. Requisito de Download do Arquivo TXT
-    
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📥 Exportar Dados")
-    
-    txt_content = "Relatório de Snapshots de Linha de Base - AWS MySQL\n\n"
-    txt_content += f"Data de exportação: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
-    txt_content += f"Empreendimento atual: {selected_empreendimento}\n\n"
-    
-    if not snapshots:
-        txt_content += "Nenhum snapshot salvo ainda."
-    else:
-        for empreendimento, versions in snapshots.items():
-            txt_content += f"==================================================\n"
-            txt_content += f"Empreendimento: {empreendimento}\n"
-            txt_content += f"==================================================\n"
-            for version, data in versions.items():
-                txt_content += f"--- Versão: {version} (Data: {data['date']}) ---\n"
-                df_version = pd.DataFrame(data['data'])
-                txt_content += df_version.to_string(index=False) + "\n\n"
-    
-    st.sidebar.download_button(
-        label="💾 Baixar Relatório de Snapshots (TXT)",
-        data=txt_content,
-        file_name=f"relatorio_snapshots_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-        mime="text/plain",
-        use_container_width=True
-    )
-    
-    # 10. Informações de Debug
-    with st.sidebar.expander("🔧 Informações de Debug"):
-        st.json(snapshots)
-        st.metric("Total de Snapshots", sum(len(versions) for versions in snapshots.values()))
-        st.metric("Snapshots deste Empreendimento", len(empreendimento_snapshots))
+        st.info(f"Nenhuma linha de base encontrada para {selected_empreendimento}.")
 
 if __name__ == "__main__":
     main()
