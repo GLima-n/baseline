@@ -202,10 +202,10 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto com Atualização Parcial ---
+# --- Menu de Contexto Simplificado ---
 
-def create_context_menu_with_partial_update(selected_empreendimento):
-    """Cria menu de contexto com atualização parcial usando session_state"""
+def create_simple_context_menu(selected_empreendimento):
+    """Cria menu de contexto simples usando apenas HTML/JS básico"""
     
     html_code = f"""
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
@@ -244,26 +244,23 @@ def create_context_menu_with_partial_update(selected_empreendimento):
 const menu = document.createElement('div');
 menu.className = 'context-menu';
 menu.innerHTML = `
-    <div class="context-menu-item" onclick="handleSnapshotAction('take_snapshot')">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="handleSnapshotAction('restore_snapshot')">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="handleSnapshotAction('delete_snapshot')">🗑️ Deletar Snapshot</div>
+    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
 `;
 document.body.appendChild(menu);
 
-function handleSnapshotAction(action) {{
-    // Envia a ação para o Streamlit sem recarregar a página inteira
-    const data = {{
-        action: action,
-        empreendimento: '{selected_empreendimento}',
-        timestamp: new Date().getTime()
-    }};
-    
-    // Usa o método do Streamlit para comunicação
-    if (window.Streamlit) {{
-        window.Streamlit.setComponentValue(data);
-    }}
-    
-    hideMenu();
+function takeSnapshot() {{
+    // Abordagem mais simples: redireciona com parâmetros na URL
+    window.location.href = `?action=take_snapshot&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
+}}
+
+function restoreSnapshot() {{
+    window.location.href = `?action=restore_snapshot&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
+}}
+
+function deleteSnapshot() {{
+    window.location.href = `?action=delete_snapshot&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
 }}
 
 function showMenu(x, y) {{
@@ -298,87 +295,37 @@ document.addEventListener('keydown', function(e) {{
 """
     return html_code
 
-# --- Componente para exibir snapshots com atualização parcial ---
+# --- Processamento de Ações ---
 
-def display_snapshots_partial(selected_empreendimento, snapshots):
-    """Exibe snapshots em um container que pode ser atualizado parcialmente"""
+def process_actions():
+    """Processa ações vindas do menu de contexto"""
+    query_params = st.query_params
     
-    with st.container():
-        st.subheader("📋 Snapshots Salvos")
-        
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        if empreendimento_snapshots:
-            for version_name in sorted(empreendimento_snapshots.keys()):
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(f"**{version_name}**")
-                    st.caption(f"Criado em: {empreendimento_snapshots[version_name]['date']}")
-                with col2:
-                    if st.button("🔍", key=f"view_{version_name}", help="Visualizar"):
-                        st.session_state.selected_snapshot = version_name
-                with col3:
-                    if st.button("🗑️", key=f"del_{version_name}", help="Deletar"):
-                        if delete_snapshot(selected_empreendimento, version_name):
-                            st.session_state.snapshot_deleted = True
-                            st.rerun()
-        else:
-            st.info("ℹ️ Nenhum snapshot salvo para este empreendimento")
-            
-        # Botão para atualizar a lista
-        if st.button("🔄 Atualizar Lista", key="refresh_snapshots"):
-            st.rerun()
-
-# --- Visualização de dados com atualização parcial ---
-
-def display_data_partial(df_filtered, selected_version, empreendimento_snapshots):
-    """Exibe dados do projeto em container separado"""
+    action = query_params.get('action')
+    empreendimento = query_params.get('empreendimento')
     
-    with st.container():
-        st.subheader("📊 Dados do Projeto")
+    if action and empreendimento:
+        # Limpa os parâmetros
+        st.query_params.clear()
         
-        # Aplica a versão selecionada
-        if selected_version == "Real Atual (Comparar com P0)":
-            df_display = df_filtered.copy()
-            st.info("📊 Comparando Real Atual com a Linha de Base **P0 (Padrão)**.")
-        elif selected_version in empreendimento_snapshots:
-            version_data_list = empreendimento_snapshots[selected_version]['data']
-            version_data = pd.DataFrame(version_data_list)
-            
-            version_prefix = selected_version.split('-')[0]
-            col_inicio = f'{version_prefix}_Previsto_Inicio'
-            col_fim = f'{version_prefix}_Previsto_Fim'
-            
-            version_data = version_data.rename(columns={col_inicio: 'Previsto_Inicio', col_fim: 'Previsto_Fim'})
-            version_data['Previsto_Inicio'] = pd.to_datetime(version_data['Previsto_Inicio'])
-            version_data['Previsto_Fim'] = pd.to_datetime(version_data['Previsto_Fim'])
-            
-            df_display = df_filtered.merge(
-                version_data[['ID_Tarefa', 'Previsto_Inicio', 'Previsto_Fim']],
-                on='ID_Tarefa',
-                how='left',
-                suffixes=('_atual', '_novo')
-            )
-            
-            df_display['Previsto_Inicio'] = df_display['Previsto_Inicio_novo']
-            df_display['Previsto_Fim'] = df_display['Previsto_Fim_novo']
-            df_display = df_display.drop(
-                columns=['Previsto_Inicio_atual', 'Previsto_Fim_atual', 'Previsto_Inicio_novo', 'Previsto_Fim_novo'], 
-                errors='ignore'
-            )
-            
-            st.info(f"📊 Comparando Real Atual com a Linha de Base: **{selected_version}**.")
-        else:
-            df_display = df_filtered.copy()
+        df = create_mock_dataframe()
         
-        # Formata datas para exibição
-        df_display_formatted = df_display[['Empreendimento', 'Tarefa', 'Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']].copy()
-        for col in ['Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']:
-            if pd.api.types.is_datetime64_any_dtype(df_display_formatted[col]):
-                df_display_formatted[col] = df_display_formatted[col].dt.strftime('%Y-%m-%d')
-        
-        st.dataframe(df_display_formatted, use_container_width=True)
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                # Atualiza o session_state para refletir a mudança
+                if 'snapshots_updated' not in st.session_state:
+                    st.session_state.snapshots_updated = 0
+                st.session_state.snapshots_updated += 1
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+        elif action == 'restore_snapshot':
+            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+        elif action == 'delete_snapshot':
+            st.warning("🗑️ Use a sidebar para deletar snapshots específicos")
 
-# --- Aplicação Principal Otimizada ---
+# --- Aplicação Principal Simplificada ---
 
 def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
@@ -387,13 +334,12 @@ def main():
     # Inicialização
     create_snapshots_table()
     
-    # Inicializa session_state se necessário
+    # Processa ações primeiro
+    process_actions()
+    
+    # Inicializa dados se necessário
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
-    if 'last_action' not in st.session_state:
-        st.session_state.last_action = None
-    if 'show_comparison' not in st.session_state:
-        st.session_state.show_comparison = False
     
     # Carrega dados
     df = st.session_state.df
@@ -414,8 +360,8 @@ def main():
         if st.button("📸 Criar Novo Snapshot", use_container_width=True, type="primary"):
             try:
                 version_name = take_snapshot(df, selected_empreendimento)
-                st.session_state.last_action = f"snapshot_created_{version_name}"
                 st.success(f"✅ {version_name} criado!")
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
         
@@ -431,61 +377,29 @@ def main():
         )
         
         st.markdown("---")
-        st.subheader("📈 Visualizações")
+        st.subheader("💾 Snapshots Salvos")
         
-        if st.button("⏳ Comparar Períodos", use_container_width=True):
-            st.session_state.show_comparison = not st.session_state.show_comparison
-    
-    # Layout principal com colunas
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Container para dados do projeto (atualização parcial)
-        display_data_partial(df_filtered, selected_version, empreendimento_snapshots)
-        
-        # Menu de contexto
-        st.markdown("---")
-        st.subheader("🎯 Menu de Contexto")
-        st.markdown("**Clique com o botão direito na área abaixo:**")
-        
-        # Componente do menu de contexto
-        context_menu_html = create_context_menu_with_partial_update(selected_empreendimento)
-        
-        # Usamos um key único para o componente para evitar recarregamentos desnecessários
-        component_key = f"context_menu_{selected_empreendimento}_{len(empreendimento_snapshots)}"
-        component_value = html(context_menu_html, height=350, key=component_key)
-        
-        # Processa ações do componente
-        if component_value:
-            action = component_value.get('action')
-            empreendimento = component_value.get('empreendimento')
+        # Lista de snapshots com opção de deletar
+        if empreendimento_snapshots:
+            for version_name in sorted(empreendimento_snapshots.keys()):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**{version_name}**")
+                    st.caption(f"Criado em: {empreendimento_snapshots[version_name]['date']}")
+                with col2:
+                    if st.button("🗑️", key=f"del_{version_name}"):
+                        if delete_snapshot(selected_empreendimento, version_name):
+                            st.success(f"✅ {version_name} deletado!")
+                            st.rerun()
+        else:
+            st.info("ℹ️ Nenhum snapshot salvo")
             
-            if action == 'take_snapshot' and empreendimento == selected_empreendimento:
-                try:
-                    version_name = take_snapshot(df, empreendimento)
-                    st.session_state.last_action = f"snapshot_created_{version_name}"
-                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                    # Não fazemos rerun aqui para evitar recarregamento total
-                except Exception as e:
-                    st.error(f"❌ Erro ao criar snapshot: {e}")
-        
-        # Exibe mensagem de ação recente se houver
-        if st.session_state.last_action:
-            if "snapshot_created" in st.session_state.last_action:
-                version_name = st.session_state.last_action.replace("snapshot_created_", "")
-                st.success(f"🎉 Snapshot '{version_name}' criado com sucesso!")
-    
-    with col2:
-        # Container para snapshots (atualização parcial)
-        display_snapshots_partial(selected_empreendimento, snapshots)
-        
-        # Botão de exportação
         st.markdown("---")
         st.subheader("📥 Exportar")
         
+        # Botão de exportação
         txt_content = f"Relatório de Snapshots\nEmpreendimento: {selected_empreendimento}\nData: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
         
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         if empreendimento_snapshots:
             for version, data in empreendimento_snapshots.items():
                 txt_content += f"--- {version} ---\n"
@@ -502,17 +416,74 @@ def main():
             use_container_width=True
         )
 
-    # Seção de comparação (condicional)
-    if st.session_state.show_comparison:
+    # Layout principal
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Dados do projeto
+        st.subheader("📊 Dados do Projeto")
+        
+        # Aplica a versão selecionada para visualização
+        df_display = df_filtered.copy()
+        
+        if selected_version != "Real Atual (Comparar com P0)":
+            # Aplica dados do snapshot selecionado
+            version_data_list = empreendimento_snapshots[selected_version]['data']
+            version_data = pd.DataFrame(version_data_list)
+            
+            version_prefix = selected_version.split('-')[0]
+            col_inicio = f'{version_prefix}_Previsto_Inicio'
+            col_fim = f'{version_prefix}_Previsto_Fim'
+            
+            # Merge com dados do snapshot
+            df_display = df_display.merge(
+                version_data[['ID_Tarefa', col_inicio, col_fim]],
+                on='ID_Tarefa',
+                how='left'
+            )
+            
+            # Atualiza as colunas de previsão
+            df_display['Previsto_Inicio'] = pd.to_datetime(df_display[col_inicio])
+            df_display['Previsto_Fim'] = pd.to_datetime(df_display[col_fim])
+        
+        # Formata para exibição
+        df_display_formatted = df_display[['Tarefa', 'Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']].copy()
+        for col in ['Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']:
+            if pd.api.types.is_datetime64_any_dtype(df_display_formatted[col]):
+                df_display_formatted[col] = df_display_formatted[col].dt.strftime('%Y-%m-%d')
+        
+        st.dataframe(df_display_formatted, use_container_width=True)
+        
+        # Informação da versão
+        if selected_version == "Real Atual (Comparar com P0)":
+            st.info("📊 Comparando **Real Atual** com **P0 (Planejamento Original)**")
+        else:
+            st.info(f"📊 Comparando **Real Atual** com **{selected_version}**")
+        
+        # Menu de contexto
         st.markdown("---")
-        st.subheader("⏳ Comparação de Períodos")
+        st.subheader("🎯 Menu de Contexto")
+        st.markdown("**Clique com o botão direito na área abaixo:**")
         
-        # Aqui você pode adicionar a lógica de comparação de períodos
-        st.info("Funcionalidade de comparação de períodos será implementada aqui")
+        # Componente do menu de contexto - CORREÇÃO: sem parâmetro key
+        context_menu_html = create_simple_context_menu(selected_empreendimento)
+        html(context_menu_html, height=350)
+    
+    with col2:
+        # Estatísticas e informações
+        st.subheader("📈 Estatísticas")
         
-        if st.button("Fechar Comparação"):
-            st.session_state.show_comparison = False
-            st.rerun()
+        st.metric("Total de Tarefas", len(df_filtered))
+        st.metric("Snapshots Salvos", len(empreendimento_snapshots))
+        
+        # Próximas ações sugeridas
+        st.markdown("---")
+        st.subheader("💡 Sugestões")
+        
+        if len(empreendimento_snapshots) == 0:
+            st.info("Crie seu primeiro snapshot para começar a comparar versões!")
+        else:
+            st.success(f"Você tem {len(empreendimento_snapshots)} snapshot(s) para comparar")
 
 if __name__ == "__main__":
     main()
