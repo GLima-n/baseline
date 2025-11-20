@@ -1,13 +1,14 @@
-
 import streamlit as st
 import pandas as pd
 import json
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
+import urllib.parse
 from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
+# Usando try/except para carregar st.secrets e garantir que o mock funcione se o secrets.toml não existir.
 try:
     DB_CONFIG = {
         'host': st.secrets["aws_db"]["host"],
@@ -17,6 +18,7 @@ try:
         'port': 3306
     }
 except Exception:
+    # Configuração de mock para garantir que o aplicativo inicie
     DB_CONFIG = {
         'host': "mock_host",
         'user': "mock_user",
@@ -30,9 +32,13 @@ except Exception:
 def get_db_connection():
     """Tenta conectar ao banco de dados, usando mock se as credenciais não existirem."""
     try:
+        # Tenta conectar com as credenciais reais
         conn = mysql.connector.connect(**DB_CONFIG)
         return conn
     except Error as e:
+        # Se falhar (provavelmente por falta de credenciais reais no ambiente de simulação),
+        # retorna None e as funções de DB usarão o mock de session_state.
+        # st.warning(f"Aviso: Não foi possível conectar ao MySQL. Usando mock de dados. Erro: {e}")
         return None
 
 def create_snapshots_table():
@@ -61,6 +67,7 @@ def create_snapshots_table():
                 cursor.close()
                 conn.close()
     else:
+        # Mock: Inicializa o armazenamento de snapshots na session_state
         if 'mock_snapshots' not in st.session_state:
             st.session_state.mock_snapshots = {}
 
@@ -93,6 +100,7 @@ def load_snapshots():
                 cursor.close()
                 conn.close()
     else:
+        # Mock: Carrega do session_state
         return st.session_state.mock_snapshots
 
 def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
@@ -118,6 +126,7 @@ def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
                 cursor.close()
                 conn.close()
     else:
+        # Mock: Salva no session_state
         if empreendimento not in st.session_state.mock_snapshots:
             st.session_state.mock_snapshots[empreendimento] = {}
         st.session_state.mock_snapshots[empreendimento][version_name] = {
@@ -144,6 +153,7 @@ def delete_snapshot(empreendimento, version_name):
                 cursor.close()
                 conn.close()
     else:
+        # Mock: Deleta do session_state
         if empreendimento in st.session_state.mock_snapshots and version_name in st.session_state.mock_snapshots[empreendimento]:
             del st.session_state.mock_snapshots[empreendimento][version_name]
             return True
@@ -157,21 +167,32 @@ def create_mock_dataframe():
         'ID_Tarefa': [1, 2, 3, 4, 5, 6],
         'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
         'Tarefa': ['Fase 1', 'Fase 2', 'Design', 'Implementação', 'Teste', 'Deploy'],
+        # Datas Reais (Atual) - Simulam o progresso atual
         'Real_Inicio': [pd.to_datetime('2025-10-01'), pd.to_datetime('2025-10-15'), pd.to_datetime('2025-11-01'), pd.to_datetime('2025-11-10'), pd.to_datetime('2025-10-26'), pd.to_datetime('2025-11-21')],
         'Real_Fim': [pd.to_datetime('2025-10-10'), pd.to_datetime('2025-10-25'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-20'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-25')],
+        # Datas Previstas (Inicial - P0) - Simulam o planejamento original
         'P0_Previsto_Inicio': [pd.to_datetime('2025-09-25'), pd.to_datetime('2025-10-12'), pd.to_datetime('2025-10-28'), pd.to_datetime('2025-11-08'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-18')],
         'P0_Previsto_Fim': [pd.to_datetime('2025-10-05'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-03'), pd.to_datetime('2025-11-15'), pd.to_datetime('2025-10-30'), pd.to_datetime('2025-11-22')],
     }
     df = pd.DataFrame(data)
+    
+    # Inicializa as colunas de planejamento atuais com P0
     df['Previsto_Inicio'] = df['P0_Previsto_Inicio']
     df['Previsto_Fim'] = df['P0_Previsto_Fim']
+    
     return df
 
 # --- Lógica de Snapshot (Backend) ---
 
 def take_snapshot(df, empreendimento):
-    """Cria um novo snapshot (linha de base) para o empreendimento."""
+    """
+    Cria um novo snapshot (linha de base) para o empreendimento.
+    As datas 'Real' atuais se tornam as novas datas 'Previstas' para a nova versão.
+    """
+    # Filtra o DataFrame pelo empreendimento
     df_empreendimento = df[df['Empreendimento'] == empreendimento].copy()
+    
+    # Determina o nome da nova versão
     existing_snapshots = load_snapshots()
     empreendimento_snapshots = existing_snapshots.get(empreendimento, {})
     existing_versions = [k for k in empreendimento_snapshots.keys() if k.startswith('P') and k.split('-')[0][1:].isdigit()]
@@ -181,6 +202,7 @@ def take_snapshot(df, empreendimento):
         max_n = 0
         for version_name in existing_versions:
             try:
+                # Extrai o número da versão (ex: P1 -> 1)
                 n_str = version_name.split('-')[0][1:]
                 n = int(n_str)
                 if n > max_n:
@@ -189,18 +211,22 @@ def take_snapshot(df, empreendimento):
                 continue
         next_n = max_n + 1
     
+    # Cria o nome da nova versão (Pn)
     version_prefix = f"P{next_n}"
     current_date_str = datetime.now().strftime("%d/%m/%Y")
     version_name = f"{version_prefix}-({current_date_str})"
     
+    # Prepara os dados do snapshot
     df_snapshot = df_empreendimento[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
     df_snapshot['Real_Inicio'] = df_snapshot['Real_Inicio'].dt.strftime('%Y-%m-%d')
     df_snapshot['Real_Fim'] = df_snapshot['Real_Fim'].dt.strftime('%Y-%m-%d')
     
+    # Converte para lista de dicionários
     snapshot_data = df_snapshot.rename(
         columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}
     ).to_dict('records')
 
+    # Salva no banco AWS
     success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
     
     if success:
@@ -211,148 +237,319 @@ def take_snapshot(df, empreendimento):
 # --- Geração do Gráfico de Gantt (Mock) ---
 
 def create_gantt_chart(df):
-    """Função mock para simular a criação do gráfico de Gantt."""
+    """
+    Função mock para simular a criação do gráfico de Gantt.
+    Retorna o HTML para a área do gráfico.
+    """
+    
+    # Usando st.dataframe como um placeholder visual para o gráfico de Gantt
     st.subheader("Gráfico de Gantt (Visualização Mock)")
+    
+    # Prepara os dados para exibição no mock
     df_display = df[['Empreendimento', 'Tarefa', 'Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']].copy()
     
+    # Formata as datas para melhor visualização
     for col in ['Real_Inicio', 'Real_Fim', 'Previsto_Inicio', 'Previsto_Fim']:
+        # Verifica se a coluna é datetime antes de formatar
         if pd.api.types.is_datetime64_any_dtype(df_display[col]):
             df_display[col] = df_display[col].dt.strftime('%Y-%m-%d')
-            
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+    st.dataframe(df_display, use_container_width=True)
     
-    # Retorna o HTML da área que o JS vai usar como alvo
-    return '<div id="gantt-chart-area" style="border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 20px; min-height: 200px;">Clique com o botão direito nesta área para o menu de Snapshot.</div>'
+    # Retorna o HTML da área do gráfico para o JS
+    return '<div id="gantt-chart-area" style="height: 400px; border: 1px solid #ccc; margin-top: 10px; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9;">Clique com o botão direito nesta área para o menu de Snapshot.</div>'
 
-# --- Funções de Injeção de Componentes (JS/CSS) ---
+# --- Lógica de Interface (Frontend) ---
 
-def inject_js_context_menu(gantt_area_html, empreendimento):
-    """Injeta o HTML da área do gráfico, o CSS e o JavaScript do menu de contexto."""
+def inject_js_context_menu(gantt_area_html, selected_empreendimento):
+    """
+    Injeta o HTML da área do gráfico, o CSS e o JavaScript para o menu circular.
+    """
+    
     # 1. Carrega o CSS
-    try:
-        with open("circular_menu(1).css", "r") as f:
-            css_content = f.read()
-        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.error("Arquivo 'circular_menu.css' não encontrado.")
-
-    # 2. Carrega o JavaScript
-    try:
-        with open("circular_menu(1).js", "r") as f:
-            js_content = f.read()
-    except FileNotFoundError:
-        st.error("Arquivo 'circular_menu.js' não encontrado.")
-        js_content = ""
-
-    # 3. O HTML da área do gráfico é injetado primeiro.
-    st.markdown(gantt_area_html, unsafe_allow_html=True)
-
-    # 4. O script de inicialização é injetado em seguida.
-    init_script = f"""
+    with open("circular_menu.css", "r") as f:
+        css_code = f.read()
+    
+    # 2. Carrega o JS
+    with open("circular_menu.js", "r") as f:
+        js_code = f.read()
+        
+    # 3. Combina CSS e JS em um único bloco HTML
+    full_html_code = f"""
+    <style>
+        {css_code}
+    </style>
+    
+    {gantt_area_html}
+    
     <script>
-        {js_content}
-        // Garante que o script rode após o DOM estar pronto
-        if (document.readyState === 'complete') {{
-            injectCircularMenu('{empreendimento}');
-        }} else {{
-            window.addEventListener('load', () => injectCircularMenu('{empreendimento}'));
-        }}
+        {js_code}
+        // Chama a função principal do JS com o empreendimento selecionado
+        injectCircularMenu("{selected_empreendimento}");
     </script>
     """
-    html(init_script, height=0, width=0)
+    
+    # Injeta o HTML/CSS/JS no Streamlit
+    html(full_html_code, height=450)
 
-# --- Função Principal do App ---
+def display_period_comparison(df_filtered, empreendimento_snapshots):
+    """
+    Exibe a comparação de período entre duas linhas de base selecionadas.
+    """
+    st.subheader(f"⏳ Visualização de Período entre Linhas de Base para {df_filtered['Empreendimento'].iloc[0]}")
+    
+    # Lista de versões disponíveis (incluindo P0)
+    version_options = ["P0 (Planejamento Original)"]
+    version_options.extend(sorted(empreendimento_snapshots.keys()))
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        version_a = st.selectbox("Selecione a Linha de Base A", version_options, index=0, key="version_a")
+    with col2:
+        # Garante que a versão B não seja a mesma que a A por padrão
+        default_index_b = 1 if len(version_options) > 1 else 0
+        version_b = st.selectbox("Selecione a Linha de Base B", version_options, index=default_index_b, key="version_b")
+        
+    if version_a == version_b:
+        st.warning("Selecione duas linhas de base diferentes para comparação.")
+        return
+
+    # Função auxiliar para carregar dados de uma versão
+    def load_version_data(version_name):
+        if version_name == "P0 (Planejamento Original)":
+            # P0 está no DataFrame principal
+            df_version = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim']].copy()
+            df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
+        else:
+            # Carrega do snapshot
+            version_data_list = empreendimento_snapshots[version_name]['data']
+            df_version = pd.DataFrame(version_data_list)
+            
+            # O nome das colunas no snapshot é Pn_Previsto_Inicio/Fim
+            version_prefix = version_name.split('-')[0]
+            col_inicio = f'{version_prefix}_Previsto_Inicio'
+            col_fim = f'{version_prefix}_Previsto_Fim'
+            
+            df_version = df_version.rename(columns={col_inicio: 'Inicio', col_fim: 'Fim'})
+            
+        # Converte as strings de data de volta para datetime
+        df_version['Inicio'] = pd.to_datetime(df_version['Inicio'])
+        df_version['Fim'] = pd.to_datetime(df_version['Fim'])
+        
+        return df_version[['ID_Tarefa', 'Inicio', 'Fim']]
+
+    # Carrega os dados das duas versões
+    df_a = load_version_data(version_a)
+    df_b = load_version_data(version_b)
+    
+    # Junta os DataFrames
+    df_merged = df_a.merge(df_b, on='ID_Tarefa', suffixes=('_A', '_B'))
+    
+    # Calcula a duração de cada tarefa em dias
+    df_merged['Duracao_A'] = (df_merged['Fim_A'] - df_merged['Inicio_A']).dt.days
+    df_merged['Duracao_B'] = (df_merged['Fim_B'] - df_merged['Inicio_B']).dt.days
+    
+    # Calcula a diferença de duração
+    df_merged['Diferenca_Duracao (dias)'] = df_merged['Duracao_B'] - df_merged['Duracao_A']
+    
+    # Calcula o desvio de início e fim em dias
+    df_merged['Desvio_Inicio (dias)'] = (df_merged['Inicio_B'] - df_merged['Inicio_A']).dt.days
+    df_merged['Desvio_Fim (dias)'] = (df_merged['Fim_B'] - df_merged['Fim_A']).dt.days
+    
+    # Adiciona informações da tarefa para contexto
+    df_context = df_filtered[['ID_Tarefa', 'Tarefa']].drop_duplicates()
+    df_final = df_context.merge(df_merged, on='ID_Tarefa')
+    
+    # Seleciona e renomeia colunas para exibição
+    df_display = df_final[[
+        'Tarefa',
+        'Inicio_A', 'Fim_A', 'Duracao_A',
+        'Inicio_B', 'Fim_B', 'Duracao_B',
+        'Diferenca_Duracao (dias)',
+        'Desvio_Inicio (dias)',
+        'Desvio_Fim (dias)'
+    ]].copy()
+    
+    # Renomeia as colunas para refletir as versões
+    df_display.columns = [
+        'Tarefa',
+        f'Início ({version_a})', f'Fim ({version_a})', f'Duração ({version_a})',
+        f'Início ({version_b})', f'Fim ({version_b})', f'Duração ({version_b})',
+        'Diferença Duração (dias)',
+        'Desvio Início (dias)',
+        'Desvio Fim (dias)'
+    ]
+    
+    st.markdown(f"**Comparação Detalhada: {version_b} vs {version_a}**")
+    st.dataframe(df_display, use_container_width=True)
+    
+    # Resumo
+    st.markdown("---")
+    st.markdown("**Resumo da Comparação**")
+    
+    total_diff = df_final['Diferenca_Duracao (dias)'].sum()
+    
+    if total_diff > 0:
+        st.error(f"O planejamento **{version_b}** é **{total_diff} dias** mais longo que **{version_a}** (soma das diferenças de duração das tarefas).")
+    elif total_diff < 0:
+        st.success(f"O planejamento **{version_b}** é **{-total_diff} dias** mais curto que **{version_a}** (soma das diferenças de duração das tarefas).")
+    else:
+        st.info("A duração total das tarefas é a mesma em ambos os planejamentos.")
+        
+    st.markdown("---")
+    st.markdown("Legenda:")
+    st.markdown("- **Diferença Duração (dias)**: Duração B - Duração A. Positivo significa que a tarefa ficou mais longa em B.")
+    st.markdown("- **Desvio Início/Fim (dias)**: Data B - Data A. Positivo significa que a tarefa começou/terminou mais tarde em B.")
+
+
+# --- Aplicação Principal Streamlit ---
 
 def main():
-    st.set_page_config(page_title="Gantt Chart Baseline/Snapshot - AWS", layout="wide")
+    st.set_page_config(layout="wide", page_title="Gantt Chart Baseline/Snapshot - AWS")
     st.title("📊 Gráfico de Gantt com Versionamento de Planejamento - AWS MySQL")
 
+    # Inicializa a tabela no banco (ou mock)
     create_snapshots_table()
 
+    # 1. Verifica se há parâmetros de ação na URL
+    query_params = st.query_params
+    take_snapshot_param = st.query_params.get('take_snapshot')
+    view_period_param = st.query_params.get('view_period')
+    empreendimento_param = st.query_params.get('empreendimento')
+    
+    # 2. Inicialização e Carregamento de Dados
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
-    df = st.session_state.df
-
-    snapshots = load_snapshots()
-
-    st.sidebar.header("⚙️ Controles")
-    st.sidebar.markdown("### 1. Selecione o Empreendimento")
-    empreendimentos = df['Empreendimento'].unique()
-    selected_empreendimento = st.sidebar.selectbox(
-        "Selecione o Empreendimento",
-        options=empreendimentos,
-        index=0,
-        key='empreendimento_selector'
-    )
-
-    df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
-    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-
-    # --- Tratamento dos Parâmetros de URL (Correção) ---
-    query_params = st.query_params.to_dict()
     
-    if query_params.get('take_snapshot') == 'true' and query_params.get('empreendimento') == selected_empreendimento:
+    df = st.session_state.df
+    snapshots = load_snapshots()
+    
+    # Mock de seleção de empreendimento
+    empreendimentos = df['Empreendimento'].unique().tolist()
+    selected_empreendimento = st.sidebar.selectbox("🏢 Selecione o Empreendimento", empreendimentos)
+    
+    # Filtra o DataFrame pelo empreendimento selecionado
+    df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
+
+    # 3. Processa o snapshot se solicitado via URL
+    if take_snapshot_param == 'true' and empreendimento_param:
         try:
-            new_version = take_snapshot(df, selected_empreendimento)
-            st.success(f"✅ Snapshot **{new_version}** criado com sucesso!")
+            # Decodifica o empreendimento
+            selected_empreendimento_url = urllib.parse.unquote(empreendimento_param)
+            
+            # Garante que o empreendimento selecionado na sidebar é o mesmo da URL
+            if selected_empreendimento_url == selected_empreendimento:
+                new_version_name = take_snapshot(df, selected_empreendimento)
+                st.query_params.clear() # Limpa os parâmetros da URL
+                st.success(f"✅ Snapshot '{new_version_name}' criado com sucesso no banco AWS!")
+                st.rerun()
+            else:
+                st.error("Erro: Empreendimento na URL não corresponde ao selecionado.")
+                st.query_params.clear()
+                st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao criar snapshot: {e}")
             st.query_params.clear()
             st.rerun()
-        except Exception as e:
-            st.error(f"❌ Erro ao criar snapshot: {e}")
-    
-    if query_params.get('view_period') == 'true' and query_params.get('empreendimento') == selected_empreendimento:
-        st.info("⏳ Funcionalidade 'Visualizar Período' acionada. Implementação pendente.")
+            
+    # 4. Processa a visualização de período se solicitada via URL
+    if view_period_param == 'true' and empreendimento_param:
+        # Limpa os parâmetros da URL para evitar loop de reruns
         st.query_params.clear()
-
-    st.sidebar.markdown("### 2. Gerenciar Snapshots")
-    if st.sidebar.button("📸 Fotografar Cenário Real como Previsto", use_container_width=True):
+        st.session_state.show_period_comparison = True
+        st.rerun()
+    
+    # 5. Gerenciamento de Snapshots (Sidebar)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📸 Gerenciar Snapshots")
+    
+    # Botão manual para criar snapshot (mantido para redundância)
+    if st.sidebar.button("📸 Fotografar Cenário Real como Previsto", key="manual_snapshot_trigger", use_container_width=True):
         try:
-            new_version = take_snapshot(df, selected_empreendimento)
-            st.success(f"✅ Snapshot **{new_version}** criado com sucesso!")
+            new_version_name = take_snapshot(df, selected_empreendimento)
+            st.success(f"✅ Snapshot '{new_version_name}' criado com sucesso no banco AWS!")
             st.rerun()
         except Exception as e:
             st.error(f"❌ Erro ao criar snapshot: {e}")
-
-    if st.sidebar.button("⏳ Visualizar Período entre Linhas de Base", use_container_width=True):
-        st.info("Funcionalidade de visualização de período ainda não implementada.")
-
-    st.sidebar.markdown("### 3. Selecione a Versão de Planejamento (Baseline) para Comparação")
-    version_options = ['Real Atual (Comparar com P0)'] + list(empreendimento_snapshots.keys())
+    
+    # Botão para alternar a visualização de período (mantido para redundância)
+    if st.sidebar.button("⏳ Visualizar Período entre Linhas de Base", key="manual_view_period_trigger", use_container_width=True):
+        st.session_state.show_period_comparison = not st.session_state.get('show_period_comparison', False)
+        st.rerun()
+        
+    # Exibe a comparação de período se o estado estiver ativo
+    if st.session_state.get('show_period_comparison', False):
+        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+        display_period_comparison(df_filtered, empreendimento_snapshots)
+        
+        # O restante do app (Gantt) só deve ser exibido se a comparação não estiver ativa
+        st.markdown("---")
+        st.subheader("Visualização do Gráfico de Gantt")
+    
+    # 6. Aplicação da Versão Selecionada ao DataFrame (para o Gantt)
+    
+    # Lista de versões disponíveis para o empreendimento selecionado
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    version_options = ["Real Atual (Comparar com P0)"]
+    version_options.extend(sorted(empreendimento_snapshots.keys()))
+    
     selected_version = st.sidebar.selectbox(
-        "Real Atual (Comparar com...)",
-        options=version_options,
+        "Selecione a Versão de Planejamento (Baseline) para Comparação",
+        version_options,
         index=0
     )
     
     if selected_version == "Real Atual (Comparar com P0)":
+        # Compara Real Atual com P0 (o planejamento original)
         df_filtered['Previsto_Inicio'] = df_filtered['P0_Previsto_Inicio']
         df_filtered['Previsto_Fim'] = df_filtered['P0_Previsto_Fim']
         st.info("📊 Comparando Real Atual com a Linha de Base **P0 (Padrão)**.")
     elif selected_version in empreendimento_snapshots:
+        # Aplica os dados da versão selecionada
         version_data_list = empreendimento_snapshots[selected_version]['data']
         version_data = pd.DataFrame(version_data_list)
+        
+        # O nome das colunas no snapshot é Pn_Previsto_Inicio/Fim
         version_prefix = selected_version.split('-')[0]
         col_inicio = f'{version_prefix}_Previsto_Inicio'
         col_fim = f'{version_prefix}_Previsto_Fim'
+        
+        # Renomeia as colunas do snapshot para 'Previsto_Inicio' e 'Previsto_Fim'
         version_data = version_data.rename(columns={col_inicio: 'Previsto_Inicio', col_fim: 'Previsto_Fim'})
+        
+        # Converte as strings de data de volta para datetime
         version_data['Previsto_Inicio'] = pd.to_datetime(version_data['Previsto_Inicio'])
         version_data['Previsto_Fim'] = pd.to_datetime(version_data['Previsto_Fim'])
+        
+        # Merge com o DataFrame filtrado
         df_filtered = df_filtered.merge(
             version_data[['ID_Tarefa', 'Previsto_Inicio', 'Previsto_Fim']],
             on='ID_Tarefa',
             how='left',
             suffixes=('_atual', '_novo')
         )
+        
+        # Atualiza as colunas de previsão
         df_filtered['Previsto_Inicio'] = df_filtered['Previsto_Inicio_novo']
         df_filtered['Previsto_Fim'] = df_filtered['Previsto_Fim_novo']
         df_filtered = df_filtered.drop(columns=['Previsto_Inicio_atual', 'Previsto_Fim_atual', 'Previsto_Inicio_novo', 'Previsto_Fim_novo'], errors='ignore')
+        
         st.info(f"📊 Comparando Real Atual com a Linha de Base: **{selected_version}**.")
     
+    # 7. Geração do Gráfico e Injeção do JS
+    
+    # Cria o HTML da área do gráfico (mock)
     gantt_area_html = create_gantt_chart(df_filtered)
+    
+    # Injeta o menu de contexto JS e o HTML da área
     inject_js_context_menu(gantt_area_html, selected_empreendimento)
     
-    st.sidebar.markdown("---
-### 💾 Snapshots Salvos")
+    # 8. Gerenciamento de Snapshots (Exibição e Deleção)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 Snapshots Salvos")
+    
     if empreendimento_snapshots:
         for version_name in sorted(empreendimento_snapshots.keys()):
             col1, col2 = st.sidebar.columns([3, 1])
@@ -366,11 +563,15 @@ def main():
     else:
         st.sidebar.info("ℹ️ Nenhum snapshot salvo para este empreendimento")
         
-    st.sidebar.markdown("---
-### 📥 Exportar Dados")
+    # 9. Requisito de Download do Arquivo TXT (Mantido)
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📥 Exportar Dados")
+    
     txt_content = "Relatório de Snapshots de Linha de Base - AWS MySQL\n\n"
     txt_content += f"Data de exportação: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
     txt_content += f"Empreendimento atual: {selected_empreendimento}\n\n"
+    
     if not snapshots:
         txt_content += "Nenhum snapshot salvo ainda."
     else:
@@ -391,6 +592,7 @@ def main():
         use_container_width=True
     )
     
+    # 10. Informações de Debug (Mantido)
     with st.sidebar.expander("🔧 Informações de Debug"):
         st.json(snapshots)
         st.metric("Total de Snapshots", sum(len(versions) for versions in snapshots.values()))
@@ -398,4 +600,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
