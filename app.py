@@ -266,27 +266,14 @@ function executeAction(action) {{
     // Esconde o menu
     document.getElementById('context-menu').style.display = 'none';
     
-    // Cria um formulário temporário para enviar os dados
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = window.location.href;
+    // Cria um link temporário para atualizar a URL
+    const url = new URL(window.location.href);
+    url.searchParams.set('action', action);
+    url.searchParams.set('empreendimento', currentEmpreendimento);
+    url.searchParams.set('timestamp', new Date().getTime());
     
-    // Adiciona campos hidden com os dados
-    const actionInput = document.createElement('input');
-    actionInput.type = 'hidden';
-    actionInput.name = 'context_menu_action';
-    actionInput.value = action;
-    form.appendChild(actionInput);
-    
-    const empreendimentoInput = document.createElement('input');
-    empreendimentoInput.type = 'hidden';
-    empreendimentoInput.name = 'empreendimento';
-    empreendimentoInput.value = currentEmpreendimento;
-    form.appendChild(empreendimentoInput);
-    
-    // Adiciona ao body e submete
-    document.body.appendChild(form);
-    form.submit();
+    // Navega para a nova URL (isso aciona um rerun no Streamlit)
+    window.location.href = url.toString();
 }}
 
 // Fecha o menu quando clicar em qualquer lugar
@@ -310,34 +297,31 @@ document.addEventListener('keydown', function(e) {{
 # --- Processamento das Ações do Menu ---
 
 def process_context_menu_actions():
-    """Processa as ações do menu de contexto"""
-    # Verifica se há ação pendente no session_state
-    if 'pending_context_action' in st.session_state:
-        action_data = st.session_state.pending_context_action
-        action = action_data.get('action')
-        empreendimento = action_data.get('empreendimento')
+    """Processa as ações do menu de contexto via query parameters"""
+    query_params = st.query_params
+    
+    action = query_params.get('action')
+    empreendimento = query_params.get('empreendimento')
+    
+    if action and empreendimento:
+        # Limpa os parâmetros imediatamente para evitar loop
+        st.query_params.clear()
         
-        # Limpa a ação pendente
-        del st.session_state.pending_context_action
+        df = st.session_state.df
         
-        if action and empreendimento:
-            df = st.session_state.df
-            
-            if action == 'take_snapshot':
-                try:
-                    version_name = take_snapshot(df, empreendimento)
-                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erro ao criar snapshot: {e}")
-            elif action == 'restore_snapshot':
-                st.info("🔄 Abrindo seletor de snapshots para restaurar...")
-                st.session_state.show_restore_dialog = True
-                st.rerun()
-            elif action == 'delete_snapshot':
-                st.info("🗑️ Abrindo gerenciador de snapshots...")
-                st.session_state.show_delete_dialog = True
-                st.rerun()
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                # Não usa st.rerun() aqui - deixa o Streamlit processar naturalmente
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+        
+        elif action == 'restore_snapshot':
+            st.session_state.show_restore_dialog = True
+        
+        elif action == 'delete_snapshot':
+            st.session_state.show_delete_dialog = True
 
 # --- Diálogos para Restaurar e Deletar ---
 
@@ -351,7 +335,6 @@ def show_restore_dialog(selected_empreendimento, snapshots):
         st.warning("Nenhum snapshot disponível para restaurar.")
         if st.button("Fechar"):
             st.session_state.show_restore_dialog = False
-            st.rerun()
         return
     
     version_options = list(empreendimento_snapshots.keys())
@@ -363,12 +346,10 @@ def show_restore_dialog(selected_empreendimento, snapshots):
             st.info(f"Snapshot '{selected_version}' será restaurado...")
             # Aqui você implementaria a lógica de restauração
             st.session_state.show_restore_dialog = False
-            st.rerun()
     
     with col2:
         if st.button("❌ Cancelar"):
             st.session_state.show_restore_dialog = False
-            st.rerun()
 
 def show_delete_dialog(selected_empreendimento, snapshots):
     """Mostra diálogo para deletar snapshot"""
@@ -380,7 +361,6 @@ def show_delete_dialog(selected_empreendimento, snapshots):
         st.warning("Nenhum snapshot disponível para deletar.")
         if st.button("Fechar"):
             st.session_state.show_delete_dialog = False
-            st.rerun()
         return
     
     for version_name in sorted(empreendimento_snapshots.keys()):
@@ -397,6 +377,8 @@ def show_delete_dialog(selected_empreendimento, snapshots):
             if st.button("🗑️", key=f"del_{version_name}"):
                 if delete_snapshot(selected_empreendimento, version_name):
                     st.success(f"✅ {version_name} deletado!")
+                    st.session_state.show_delete_dialog = False
+                    # Usa experimental_rerun em vez de rerun
                     st.rerun()
                 else:
                     st.error(f"❌ Erro ao deletar {version_name}")
@@ -408,12 +390,10 @@ def show_delete_dialog(selected_empreendimento, snapshots):
                 st.dataframe(df_snapshot, use_container_width=True)
                 if st.button("Fechar Visualização", key=f"close_view_{version_name}"):
                     st.session_state[f"viewing_{version_name}"] = False
-                    st.rerun()
     
     st.markdown("---")
     if st.button("Fechar Gerenciador"):
         st.session_state.show_delete_dialog = False
-        st.rerun()
 
 # --- Visualização de Comparação de Período ---
 
@@ -471,13 +451,22 @@ def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
     st.title("📊 Gráfico de Gantt com Versionamento")
     
-    # Inicialização
+    # Inicialização do session_state
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
     
+    if 'show_restore_dialog' not in st.session_state:
+        st.session_state.show_restore_dialog = False
+    
+    if 'show_delete_dialog' not in st.session_state:
+        st.session_state.show_delete_dialog = False
+    
+    if 'show_comparison' not in st.session_state:
+        st.session_state.show_comparison = False
+    
     create_snapshots_table()
     
-    # Processa ações do menu de contexto
+    # Processa ações do menu de contexto PRIMEIRO
     process_context_menu_actions()
     
     df = st.session_state.df
@@ -497,13 +486,11 @@ def main():
         try:
             version_name = take_snapshot(df, selected_empreendimento)
             st.sidebar.success(f"✅ {version_name} criado!")
-            st.rerun()
         except Exception as e:
             st.sidebar.error(f"❌ Erro: {e}")
     
     if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
-        st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
-        st.rerun()
+        st.session_state.show_comparison = not st.session_state.show_comparison
     
     # Visualização principal
     col1, col2 = st.columns([2, 1])
@@ -529,24 +516,22 @@ def main():
     html(context_menu_html, height=350)
     
     # Diálogos modais
-    if st.session_state.get('show_restore_dialog', False):
+    if st.session_state.show_restore_dialog:
         st.markdown("---")
         show_restore_dialog(selected_empreendimento, snapshots)
     
-    if st.session_state.get('show_delete_dialog', False):
+    if st.session_state.show_delete_dialog:
         st.markdown("---")
         show_delete_dialog(selected_empreendimento, snapshots)
     
     # Comparação de períodos
-    if st.session_state.get('show_comparison', False):
+    if st.session_state.show_comparison:
         st.markdown("---")
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        display_period_comparison(df_filtered, empreendimento_snapshots)
-    
-    # Captura de ações via form
-    if st.rerun():
-        # Esta parte captura as ações do formulário HTML
-        pass
+        if empreendimento_snapshots:
+            display_period_comparison(df_filtered, empreendimento_snapshots)
+        else:
+            st.warning("Nenhum snapshot disponível para comparação")
 
 if __name__ == "__main__":
     main()
