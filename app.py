@@ -255,14 +255,10 @@ def buffer_new_snapshot(df, empreendimento):
 # --- Menu de Contexto e Scripts JS ---
 
 def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes):
-    """
-    Gera o HTML/JS injetado diretamente no DOM (bypassando o iframe sandbox).
-    """
     js_has_unsaved = str(has_unsaved_changes).lower()
     
     html_code = f"""
     <style>
-    /* Estilo da área do gráfico */
     #gantt-area-container {{
         height: 300px; 
         border: 2px dashed #ccc; 
@@ -270,28 +266,25 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
         align-items: center; 
         justify-content: center; 
         background-color: #f9f9f9; 
-        cursor: context-menu; /* Cursor correto para clique direito */
+        cursor: context-menu;
         margin: 20px 0; 
         border-radius: 8px;
-        transition: background 0.3s;
+        position: relative; /* Importante para posicionamento */
     }}
     #gantt-area-container:hover {{
         background-color: #f1f1f1;
         border-color: #bbb;
     }}
-
-    /* Menu de Contexto */
     .custom-context-menu {{
-        position: fixed;
+        position: fixed; /* Fixed para garantir que fique sobre tudo */
         background: white;
         border: 1px solid #ddd;
         border-radius: 6px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        z-index: 999999; /* Z-index alto para ficar acima de tudo */
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 999999;
         display: none;
         font-family: "Source Sans Pro", sans-serif;
         font-size: 14px;
-        overflow: hidden;
         min-width: 180px;
     }}
     .custom-context-menu-item {{
@@ -304,11 +297,11 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
     }}
     .custom-context-menu-item:hover {{
         background: #f0f2f6;
-        color: #ff4b4b; /* Cor padrão do Streamlit */
+        color: #ff4b4b;
     }}
     </style>
 
-    <div id="gantt-area-container">
+    <div id="gantt-area-container" class="gantt-target">
         <div style="text-align: center; pointer-events: none;">
             <h3 style="margin:0; color: #31333F;">📈 Área do Gráfico de Gantt</h3>
             <p style="margin:5px 0 0 0; color: #666; font-size: 0.9em;">
@@ -328,60 +321,77 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
     </div>
 
     <script>
+    // Script encapsulado para não poluir escopo global desnecessariamente
     (function() {{
-        // --- 1. Proteção de Dados (Unsaved Changes) ---
+        // 1. Proteção de Dados (Unsaved Changes)
         const hasUnsaved = {js_has_unsaved};
-        
-        // Como estamos no st.markdown, 'window' É a janela principal. Sem hacks.
         if (hasUnsaved) {{
             window.onbeforeunload = function(e) {{
                 e = e || window.event;
-                if (e) {{ e.returnValue = 'Você tem dados não salvos!'; }}
-                return 'Você tem dados não salvos!';
+                if (e) {{ e.returnValue = 'Dados não salvos!'; }}
+                return 'Dados não salvos!';
             }};
         }} else {{
             window.onbeforeunload = null;
         }}
 
-        // --- 2. Lógica do Menu de Contexto ---
-        const menu = document.getElementById('custom-context-menu');
-        const area = document.getElementById('gantt-area-container');
-
-        // Função global para ser chamada pelo onclick do HTML
+        // 2. Função de Ação Global
         window.triggerSnapshotAction = function(action) {{
-            menu.style.display = 'none';
-            
-            // Manipulação direta da URL (Funciona porque não estamos em iframe)
+            document.getElementById('custom-context-menu').style.display = 'none';
             const params = new URLSearchParams(window.location.search);
             params.set('snapshot_action', action);
             params.set('empreendimento', "{selected_empreendimento}");
-            params.set('ts', Date.now()); // Timestamp para forçar reload
-            
+            params.set('ts', Date.now());
             window.location.search = params.toString();
         }};
 
-        // Evento de clique direito (Context Menu)
-        // Removemos listener anterior para evitar duplicação se o componente re-renderizar
-        if (area) {{
-            area.oncontextmenu = function(e) {{
-                e.preventDefault();
-                menu.style.left = e.pageX + 'px';
-                menu.style.top = e.pageY + 'px';
-                menu.style.display = 'block';
-            }};
+        // 3. LÓGICA DE EVENTO (DELEGAÇÃO)
+        // Removemos listener antigo para evitar duplicação em reruns do Streamlit
+        if (window.ganttContextMenuHandler) {{
+            document.removeEventListener('contextmenu', window.ganttContextMenuHandler);
+        }}
+        
+        if (window.ganttClickHandler) {{
+            document.removeEventListener('click', window.ganttClickHandler);
         }}
 
-        // Fechar menu ao clicar fora
-        document.addEventListener('click', function(e) {{
+        // Define o novo handler de Context Menu
+        window.ganttContextMenuHandler = function(e) {{
+            // Verifica se o elemento clicado (ou algum pai dele) é o nosso container
+            const target = e.target.closest('#gantt-area-container');
+            const menu = document.getElementById('custom-context-menu');
+
+            if (target && menu) {{
+                e.preventDefault(); // Bloqueia menu nativo do navegador
+                menu.style.display = 'block';
+                menu.style.left = e.pageX + 'px';
+                menu.style.top = e.pageY + 'px';
+            }} else if (menu) {{
+                // Se clicar com direito fora, esconde
+                menu.style.display = 'none';
+            }}
+        }};
+
+        // Define handler para clicar fora (fechar menu)
+        window.ganttClickHandler = function(e) {{
+            const menu = document.getElementById('custom-context-menu');
             if (menu && !menu.contains(e.target)) {{
                 menu.style.display = 'none';
             }}
-        }});
+        }};
+        
+        // Handler para ESC
+        window.ganttEscHandler = function(e) {{
+             if (e.key === 'Escape') {{
+                 const menu = document.getElementById('custom-context-menu');
+                 if(menu) menu.style.display = 'none';
+             }}
+        }};
 
-        // Fechar com ESC
-        document.addEventListener('keydown', function(e) {{
-            if (e.key === 'Escape' && menu) menu.style.display = 'none';
-        }});
+        // Adiciona os listeners ao DOCUMENTO (garantia de funcionar mesmo com delay de render)
+        document.addEventListener('contextmenu', window.ganttContextMenuHandler);
+        document.addEventListener('click', window.ganttClickHandler);
+        document.addEventListener('keydown', window.ganttEscHandler);
 
     }})();
     </script>
