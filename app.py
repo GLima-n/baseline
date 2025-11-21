@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
+import urllib.parse
 from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
@@ -23,6 +24,13 @@ except Exception:
         'database': "mock_db",
         'port': 3306
     }
+
+# --- Estado da Sessão ---
+if 'unsaved_changes' not in st.session_state:
+    st.session_state.unsaved_changes = False
+
+if 'local_data' not in st.session_state:
+    st.session_state.local_data = {}
 
 # --- Funções de Banco de Dados ---
 
@@ -89,7 +97,7 @@ def load_snapshots():
                 cursor.close()
                 conn.close()
     else:
-        return st.session_state.get('mock_snapshots', {})
+        return st.session_state.mock_snapshots
 
 def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
     conn = get_db_connection()
@@ -113,8 +121,6 @@ def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
                 cursor.close()
                 conn.close()
     else:
-        if 'mock_snapshots' not in st.session_state:
-            st.session_state.mock_snapshots = {}
         if empreendimento not in st.session_state.mock_snapshots:
             st.session_state.mock_snapshots[empreendimento] = {}
         st.session_state.mock_snapshots[empreendimento][version_name] = {
@@ -140,11 +146,132 @@ def delete_snapshot(empreendimento, version_name):
                 cursor.close()
                 conn.close()
     else:
-        if (empreendimento in st.session_state.get('mock_snapshots', {}) and 
-            version_name in st.session_state.mock_snapshots[empreendimento]):
+        if empreendimento in st.session_state.mock_snapshots and version_name in st.session_state.mock_snapshots[empreendimento]:
             del st.session_state.mock_snapshots[empreendimento][version_name]
             return True
         return False
+
+# --- Funções para Gerenciar Dados Locais ---
+
+def save_local_data(empreendimento, version_name, snapshot_data):
+    """Salva dados no localStorage via JavaScript"""
+    key = f"snapshot_{empreendimento}_{version_name}"
+    data_to_save = {
+        'empreendimento': empreendimento,
+        'version_name': version_name,
+        'snapshot_data': snapshot_data,
+        'created_date': datetime.now().strftime("%d/%m/%Y"),
+        'saved_to_aws': False
+    }
+    
+    js_code = f"""
+    <script>
+        const data = {json.dumps(data_to_save)};
+        localStorage.setItem('{key}', JSON.stringify(data));
+        console.log('Dados salvos localmente:', '{key}');
+        
+        // Marcar que há mudanças não salvas
+        localStorage.setItem('has_unsaved_changes', 'true');
+        
+        // Atualizar o estado do Streamlit
+        window.parent.postMessage({{
+            type: 'streamlit:setComponentValue',
+            value: {{
+                action: 'local_data_saved',
+                key: '{key}',
+                has_unsaved_changes: true
+            }}
+        }}, '*');
+    </script>
+    """
+    html(js_code, height=0)
+    st.session_state.unsaved_changes = True
+
+def get_local_data():
+    """Recupera todos os dados do localStorage"""
+    js_code = """
+    <script>
+        function getAllLocalStorageData() {
+            const data = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('snapshot_')) {
+                    try {
+                        data[key] = JSON.parse(localStorage.getItem(key));
+                    } catch (e) {
+                        console.error('Erro ao parsear:', key, e);
+                    }
+                }
+            }
+            const has_unsaved_changes = localStorage.getItem('has_unsaved_changes') === 'true';
+            return { data, has_unsaved_changes };
+        }
+        
+        const localData = getAllLocalStorageData();
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: {
+                action: 'local_data_loaded',
+                data: localData.data,
+                has_unsaved_changes: localData.has_unsaved_changes
+            }
+        }, '*');
+    </script>
+    """
+    html(js_code, height=0)
+
+def clear_local_data():
+    """Limpa todos os dados locais"""
+    js_code = """
+    <script>
+        // Remove apenas os dados da aplicação, mantendo outras chaves
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key.startsWith('snapshot_') || key === 'has_unsaved_changes') {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        console.log('Dados locais limpos');
+        
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: {
+                action: 'local_data_cleared',
+                has_unsaved_changes: false
+            }
+        }, '*');
+    </script>
+    """
+    html(js_code, height=0)
+
+def setup_before_unload():
+    """Configura o aviso antes de fechar/recarregar a página"""
+    js_code = """
+    <script>
+        function setupBeforeUnload() {
+            window.addEventListener('beforeunload', function (e) {
+                const hasUnsavedChanges = localStorage.getItem('has_unsaved_changes') === 'true';
+                if (hasUnsavedChanges) {
+                    e.preventDefault();
+                    e.returnValue = 'Você tem alterações não salvas. Tem certeza que deseja sair?';
+                    return 'Você tem alterações não salvas. Tem certeza que deseja sair?';
+                }
+            });
+        }
+        
+        // Executar quando a página carregar
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupBeforeUnload);
+        } else {
+            setupBeforeUnload();
+        }
+        
+        console.log('Beforeunload handler configurado');
+    </script>
+    """
+    html(js_code, height=0)
 
 # --- Função para criar DataFrame de exemplo ---
 
@@ -165,7 +292,7 @@ def create_mock_dataframe():
 
 # --- Lógica de Snapshot ---
 
-def take_snapshot(df, empreendimento):
+def take_snapshot(df, empreendimento, save_locally=True):
     df_empreendimento = df[df['Empreendimento'] == empreendimento].copy()
     
     existing_snapshots = load_snapshots()
@@ -197,257 +324,228 @@ def take_snapshot(df, empreendimento):
         columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}
     ).to_dict('records')
 
-    success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
-    
-    if success:
-        return version_name
+    if save_locally:
+        # Salva localmente primeiro
+        save_local_data(empreendimento, version_name, snapshot_data)
+        return version_name, True  # True indica que foi salvo localmente
     else:
-        raise Exception("Falha ao salvar snapshot no banco de dados")
+        # Salva diretamente na AWS
+        success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
+        return version_name, success
 
-# --- Menu de Contexto SIMPLES E FUNCIONAL ---
+def save_local_to_aws():
+    """Salva todos os dados locais na AWS"""
+    local_data = st.session_state.get('local_data', {})
+    saved_count = 0
+    error_count = 0
+    
+    for key, data in local_data.items():
+        if not data.get('saved_to_aws', False):
+            success = save_snapshot(
+                data['empreendimento'],
+                data['version_name'],
+                data['snapshot_data'],
+                data['created_date']
+            )
+            if success:
+                data['saved_to_aws'] = True
+                saved_count += 1
+                
+                # Remove do localStorage após salvar na AWS
+                js_code = f"""
+                <script>
+                    localStorage.removeItem('{key}');
+                    console.log('Dados movidos para AWS e removidos do localStorage:', '{key}');
+                </script>
+                """
+                html(js_code, height=0)
+            else:
+                error_count += 1
+    
+    # Atualiza flag de mudanças não salvas
+    if saved_count > 0 and error_count == 0:
+        js_code = """
+        <script>
+            localStorage.setItem('has_unsaved_changes', 'false');
+        </script>
+        """
+        html(js_code, height=0)
+        st.session_state.unsaved_changes = False
+    
+    return saved_count, error_count
 
-def create_simple_context_menu(selected_empreendimento, snapshots):
-    """Menu de contexto simples que realmente funciona"""
+# --- Menu de Contexto Melhorado ---
+
+def create_enhanced_context_menu(selected_empreendimento):
+    """Cria um menu de contexto com sincronização JavaScript-Python"""
     
-    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-    has_snapshots = len(empreendimento_snapshots) > 0
-    
-    # JavaScript simples para menu de contexto
-    js_code = f"""
-    <script>
-    function setupContextMenu() {{
-        const ganttArea = document.getElementById('gantt-area');
-        const menu = document.createElement('div');
-        
-        menu.innerHTML = `
-            <div id="contextMenu" style="
-                position: fixed;
-                background: white;
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
-                z-index: 1000;
-                display: none;
-                min-width: 200px;
-            ">
-                <div onclick="handleTakeSnapshot()" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px;">
-                    📸 Tirar Snapshot
-                </div>
-                <div onclick="handleRestoreSnapshot()" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px; {'' if has_snapshots else 'color: #999; cursor: not-allowed;'}" {'' if has_snapshots else 'onclick="return false"'}>
-                    🔄 Restaurar Snapshot
-                </div>
-                <div onclick="handleDeleteSnapshot()" style="padding: 10px 15px; cursor: pointer; display: flex; align-items: center; gap: 8px; {'' if has_snapshots else 'color: #999; cursor: not-allowed;'}" {'' if has_snapshots else 'onclick="return false"'}>
-                    🗑️ Deletar Snapshot
-                </div>
-            </div>
-        `;
-        
-        document.body.appendChild(menu);
-        const contextMenu = document.getElementById('contextMenu');
-        
-        // Funções que atualizam elementos hidden que o Streamlit pode detectar
-        window.handleTakeSnapshot = function() {{
-            // Cria um elemento hidden que o Streamlit pode detectar
-            const trigger = document.createElement('div');
-            trigger.id = 'trigger_take_snapshot';
-            trigger.style.display = 'none';
-            document.body.appendChild(trigger);
-            hideMenu();
-        }};
-        
-        window.handleRestoreSnapshot = function() {{
-            if ({'true' if has_snapshots else 'false'}) {{
-                const trigger = document.createElement('div');
-                trigger.id = 'trigger_restore_snapshot';
-                trigger.style.display = 'none';
-                document.body.appendChild(trigger);
-                hideMenu();
-            }}
-        }};
-        
-        window.handleDeleteSnapshot = function() {{
-            if ({'true' if has_snapshots else 'false'}) {{
-                const trigger = document.createElement('div');
-                trigger.id = 'trigger_delete_snapshot';
-                trigger.style.display = 'none';
-                document.body.appendChild(trigger);
-                hideMenu();
-            }}
-        }};
-        
-        function showMenu(x, y) {{
-            contextMenu.style.left = x + 'px';
-            contextMenu.style.top = y + 'px';
-            contextMenu.style.display = 'block';
-        }}
-        
-        function hideMenu() {{
-            contextMenu.style.display = 'none';
-        }}
-        
-        // Event listeners
-        ganttArea.addEventListener('contextmenu', function(e) {{
-            e.preventDefault();
-            showMenu(e.pageX, e.pageY);
-        }});
-        
-        document.addEventListener('click', function(e) {{
-            if (!contextMenu.contains(e.target)) {{
-                hideMenu();
-            }}
-        }});
-        
-        document.addEventListener('keydown', function(e) {{
-            if (e.key === 'Escape') {{
-                hideMenu();
-            }}
-        }});
-    }}
-    
-    // Inicializa quando o documento estiver pronto
-    if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', setupContextMenu);
-    }} else {{
-        setupContextMenu();
-    }}
-    </script>
-    """
-    
-    html_content = f"""
-    <div id="gantt-area" style="
-        height: 300px; 
-        border: 2px dashed #ccc; 
-        display: flex; 
-        align-items: center; 
-        justify-content: center; 
-        background-color: #f9f9f9; 
-        cursor: pointer; 
-        margin: 20px 0;
-        border-radius: 8px;
-    ">
-        <div style="text-align: center;">
-            <h3 style="color: #666; margin-bottom: 10px;">Área do Gráfico de Gantt - {selected_empreendimento}</h3>
-            <p style="color: #888; margin: 5px 0;">Clique com o botão direito para abrir o menu de snapshot</p>
-            <p style="color: #999; font-size: 12px; margin: 5px 0;">
-                Snapshots disponíveis: {len(empreendimento_snapshots)}
-            </p>
-        </div>
+    html_code = f"""
+<div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
+    <div style="text-align: center;">
+        <h3>Área do Gráfico de Gantt</h3>
+        <p>Clique com o botão direito para abrir o menu de snapshot</p>
+        <p style="font-size: 12px; color: #666;">Os snapshots são salvos localmente primeiro</p>
     </div>
-    {js_code}
-    """
-    
-    return html_content
+</div>
 
-# --- Componentes Visíveis para Ações do Menu ---
+<style>
+.context-menu {{
+    position: fixed;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+    z-index: 1000;
+    display: none;
+    min-width: 200px;
+}}
+.context-menu-item {{
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}}
+.context-menu-item:hover {{
+    background: #f0f0f0;
+}}
+.context-menu-item:last-child {{
+    border-bottom: none;
+}}
+.context-menu-divider {{
+    height: 1px;
+    background: #eee;
+    margin: 5px 0;
+}}
+</style>
 
-def create_context_action_buttons(selected_empreendimento, snapshots):
-    """Cria botões visíveis que são acionados pelo menu de contexto"""
+<script>
+// Cria o menu de contexto
+const menu = document.createElement('div');
+menu.className = 'context-menu';
+menu.innerHTML = `
+    <div class="context-menu-item" onclick="takeSnapshot()">
+        <span>📸</span>
+        <span>Tirar Snapshot (Local)</span>
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">
+        <span>🔄</span>
+        <span>Restaurar Snapshot</span>
+    </div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">
+        <span>🗑️</span>
+        <span>Deletar Snapshot</span>
+    </div>
+`;
+document.body.appendChild(menu);
+
+// Funções do menu
+function takeSnapshot() {{
+    hideMenu();
+    // Cria um elemento hidden para comunicação com Streamlit
+    const event = new CustomEvent('takeSnapshot', {{ 
+        detail: {{ empreendimento: '{selected_empreendimento}' }}
+    }});
+    document.dispatchEvent(event);
+}}
+
+function restoreSnapshot() {{
+    hideMenu();
+    const event = new CustomEvent('restoreSnapshot', {{
+        detail: {{ empreendimento: '{selected_empreendimento}' }}
+    }});
+    document.dispatchEvent(event);
+}}
+
+function deleteSnapshot() {{
+    hideMenu();
+    const event = new CustomEvent('deleteSnapshot', {{
+        detail: {{ empreendimento: '{selected_empreendimento}' }}
+    }});
+    document.dispatchEvent(event);
+}}
+
+function showMenu(x, y) {{
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.display = 'block';
+}}
+
+function hideMenu() {{
+    menu.style.display = 'none';
+}}
+
+// Event listeners
+document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
+    e.preventDefault();
+    showMenu(e.pageX, e.pageY);
+}});
+
+document.addEventListener('click', function(e) {{
+    if (!menu.contains(e.target)) {{
+        hideMenu();
+    }}
+}});
+
+// Fecha o menu com ESC
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+        hideMenu();
+    }}
+}});
+
+// Comunicação com Streamlit para snapshot
+document.addEventListener('takeSnapshot', function(e) {{
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=take_snapshot&empreendimento=${{e.detail.empreendimento}}&timestamp=${{Date.now()}}`;
+    link.click();
+}});
+
+document.addEventListener('restoreSnapshot', function(e) {{
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=restore_snapshot&empreendimento=${{e.detail.empreendimento}}&timestamp=${{Date.now()}}`;
+    link.click();
+}});
+
+document.addEventListener('deleteSnapshot', function(e) {{
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=delete_snapshot&empreendimento=${{e.detail.empreendimento}}&timestamp=${{Date.now()}}`;
+    link.click();
+}});
+</script>
+"""
+    return html_code
+
+# --- Função para processar ações do menu ---
+
+def process_snapshot_actions():
+    """Processa ações do menu de contexto via query parameters"""
+    query_params = st.query_params
     
-    st.markdown("### Ações do Menu de Contexto")
-    st.info("💡 Use os botões abaixo ou clique com botão direito na área do Gantt acima")
+    action = query_params.get('snapshot_action')
+    empreendimento = query_params.get('empreendimento')
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📸 Tirar Snapshot", key="visible_take_snapshot", use_container_width=True):
+    if action and empreendimento:
+        # Limpa os parâmetros
+        st.query_params.clear()
+        
+        df = create_mock_dataframe()
+        
+        if action == 'take_snapshot':
             try:
-                version_name = take_snapshot(st.session_state.df, selected_empreendimento)
-                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                version_name, saved_locally = take_snapshot(df, empreendimento, save_locally=True)
+                if saved_locally:
+                    st.success(f"✅ Snapshot '{version_name}' salvo localmente!")
+                    st.info("💡 Use o botão 'Enviar para AWS' na barra lateral para salvar permanentemente.")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro ao criar snapshot: {e}")
-    
-    with col2:
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        if st.button("🔄 Restaurar Snapshot", 
-                    key="visible_restore_snapshot", 
-                    use_container_width=True,
-                    disabled=len(empreendimento_snapshots) == 0):
-            if len(empreendimento_snapshots) > 0:
-                st.session_state.show_restore_modal = True
-                st.rerun()
-            else:
-                st.warning("Nenhum snapshot disponível para restaurar")
-    
-    with col3:
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        if st.button("🗑️ Deletar Snapshot", 
-                    key="visible_delete_snapshot", 
-                    use_container_width=True,
-                    disabled=len(empreendimento_snapshots) == 0):
-            if len(empreendimento_snapshots) > 0:
-                st.session_state.show_delete_modal = True
-                st.rerun()
-            else:
-                st.warning("Nenhum snapshot disponível para deletar")
-
-# --- Modais para Restauração e Deleção ---
-
-def show_restore_modal(empreendimento, snapshots):
-    """Modal para selecionar snapshot para restauração"""
-    st.markdown("---")
-    st.subheader("🔄 Restaurar Snapshot")
-    
-    empreendimento_snapshots = snapshots.get(empreendimento, {})
-    if not empreendimento_snapshots:
-        st.warning("Nenhum snapshot disponível para restauração")
-        if st.button("Fechar", key="close_restore_empty"):
-            st.session_state.show_restore_modal = False
-            st.rerun()
-        return
-    
-    version_options = list(empreendimento_snapshots.keys())
-    selected_version = st.selectbox("Selecione o snapshot para restaurar:", version_options, key="restore_select")
-    
-    # Mostra preview do snapshot
-    st.markdown("**Preview do Snapshot:**")
-    snapshot_data = empreendimento_snapshots[selected_version]['data']
-    df_preview = pd.DataFrame(snapshot_data)
-    st.dataframe(df_preview, use_container_width=True)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("✅ Confirmar Restauração", use_container_width=True, key="confirm_restore"):
-            # Aqui você implementaria a lógica de restauração
-            st.success(f"Snapshot '{selected_version}' restaurado com sucesso!")
-            st.session_state.show_restore_modal = False
-            st.rerun()
-    
-    with col2:
-        if st.button("❌ Cancelar", use_container_width=True, key="cancel_restore"):
-            st.session_state.show_restore_modal = False
-            st.rerun()
-
-def show_delete_modal(empreendimento, snapshots):
-    """Modal para confirmar deleção de snapshot"""
-    st.markdown("---")
-    st.subheader("🗑️ Deletar Snapshot")
-    
-    empreendimento_snapshots = snapshots.get(empreendimento, {})
-    if not empreendimento_snapshots:
-        st.warning("Nenhum snapshot disponível para deleção")
-        if st.button("Fechar", key="close_delete_empty"):
-            st.session_state.show_delete_modal = False
-            st.rerun()
-        return
-    
-    version_options = list(empreendimento_snapshots.keys())
-    selected_version = st.selectbox("Selecione o snapshot para deletar:", version_options, key="delete_select")
-    
-    st.warning(f"⚠️ Tem certeza que deseja deletar o snapshot '{selected_version}'? Esta ação não pode ser desfeita.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("✅ Confirmar Deleção", type="primary", use_container_width=True, key="confirm_delete"):
-            if delete_snapshot(empreendimento, selected_version):
-                st.success(f"✅ Snapshot '{selected_version}' deletado com sucesso!")
-                st.session_state.show_delete_modal = False
-                st.rerun()
-    
-    with col2:
-        if st.button("❌ Cancelar", use_container_width=True, key="cancel_delete"):
-            st.session_state.show_delete_modal = False
-            st.rerun()
+        elif action == 'restore_snapshot':
+            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+        elif action == 'delete_snapshot':
+            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
 
 # --- Visualização de Comparação de Período ---
 
@@ -505,9 +603,21 @@ def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
     st.title("📊 Gráfico de Gantt com Versionamento")
     
+    # Configura aviso antes de fechar
+    setup_before_unload()
+    
     # Inicialização
     create_snapshots_table()
     
+    # Carrega dados locais ao iniciar
+    if 'local_data_loaded' not in st.session_state:
+        get_local_data()
+        st.session_state.local_data_loaded = True
+    
+    # Processa ações do menu primeiro
+    process_snapshot_actions()
+    
+    # Dados
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
     
@@ -519,14 +629,63 @@ def main():
     selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
     df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
     
-    # Botões de ação na sidebar
+    # Botões de ação na sidebar - DADOS LOCAIS
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 Dados Locais")
+    
+    # Indicador de mudanças não salvas
+    if st.session_state.unsaved_changes:
+        st.sidebar.warning("⚠️ Você tem dados não salvos na AWS!")
+    
+    col1, col2 = st.sidebar.columns(2)
+    
+    with col1:
+        if st.button("📥 Carregar Locais", use_container_width=True, help="Carrega dados salvos localmente"):
+            get_local_data()
+            st.rerun()
+    
+    with col2:
+        if st.button("🗑️ Limpar Locais", use_container_width=True, help="Remove todos os dados locais"):
+            clear_local_data()
+            st.session_state.unsaved_changes = False
+            st.session_state.local_data = {}
+            st.success("Dados locais limpos!")
+            st.rerun()
+    
+    # Botão para enviar para AWS
+    if st.sidebar.button("🚀 Enviar para AWS", type="primary", use_container_width=True, 
+                        disabled=not st.session_state.unsaved_changes):
+        with st.spinner("Enviando dados para AWS..."):
+            saved_count, error_count = save_local_to_aws()
+            
+            if error_count == 0:
+                if saved_count > 0:
+                    st.success(f"✅ {saved_count} snapshot(s) salvos na AWS!")
+                else:
+                    st.info("ℹ️ Nenhum dado novo para salvar na AWS.")
+            else:
+                st.error(f"❌ Erro ao salvar {error_count} snapshot(s) na AWS.")
+        
+        st.rerun()
+    
+    # Botões de ação rápidos
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📸 Ações Rápidas")
     
-    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True):
+    if st.sidebar.button("📸 Criar Snapshot Local", use_container_width=True):
         try:
-            version_name = take_snapshot(df, selected_empreendimento)
-            st.success(f"✅ {version_name} criado!")
+            version_name, saved_locally = take_snapshot(df, selected_empreendimento, save_locally=True)
+            if saved_locally:
+                st.success(f"✅ {version_name} salvo localmente!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro: {e}")
+    
+    if st.sidebar.button("📸 Criar Snapshot AWS", use_container_width=True):
+        try:
+            version_name, success = take_snapshot(df, selected_empreendimento, save_locally=False)
+            if success:
+                st.success(f"✅ {version_name} salvo diretamente na AWS!")
             st.rerun()
         except Exception as e:
             st.error(f"❌ Erro: {e}")
@@ -543,31 +702,33 @@ def main():
         st.dataframe(df_filtered, use_container_width=True)
     
     with col2:
-        st.subheader("Snapshots")
+        st.subheader("Snapshots AWS")
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         if empreendimento_snapshots:
             for version in sorted(empreendimento_snapshots.keys()):
                 st.write(f"• {version}")
         else:
-            st.info("Nenhum snapshot")
+            st.info("Nenhum snapshot na AWS")
+        
+        # Mostra snapshots locais
+        st.subheader("Snapshots Locais")
+        local_snapshots = {}
+        for key, data in st.session_state.get('local_data', {}).items():
+            if data.get('empreendimento') == selected_empreendimento:
+                local_snapshots[data['version_name']] = data
+        
+        if local_snapshots:
+            for version in sorted(local_snapshots.keys()):
+                status = "✅" if local_snapshots[version].get('saved_to_aws') else "⏳"
+                st.write(f"• {version} {status}")
+        else:
+            st.info("Nenhum snapshot local")
     
-    # Menu de contexto FUNCIONAL
+    # Menu de contexto
     st.markdown("---")
-    st.subheader("Menu de Contexto")
-    
-    # Área do menu de contexto
-    context_menu_html = create_simple_context_menu(selected_empreendimento, snapshots)
+    st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    context_menu_html = create_enhanced_context_menu(selected_empreendimento)
     html(context_menu_html, height=350)
-    
-    # Botões visíveis para as ações (fallback)
-    create_context_action_buttons(selected_empreendimento, snapshots)
-    
-    # Modais
-    if st.session_state.get('show_restore_modal', False):
-        show_restore_modal(selected_empreendimento, snapshots)
-    
-    if st.session_state.get('show_delete_modal', False):
-        show_delete_modal(selected_empreendimento, snapshots)
     
     # Comparação de períodos
     if st.session_state.get('show_comparison', False):
@@ -577,7 +738,7 @@ def main():
     
     # Gerenciamento de snapshots na sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
+    st.sidebar.markdown("### 🔧 Gerenciar Snapshots")
     
     empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
     if empreendimento_snapshots:
@@ -590,6 +751,43 @@ def main():
                     if delete_snapshot(selected_empreendimento, version_name):
                         st.success(f"✅ {version_name} deletado!")
                         st.rerun()
+
+    # Componente para receber mensagens do JavaScript
+    html("""
+    <script>
+    // Ouvinte para mensagens do JavaScript (localStorage)
+    window.addEventListener('message', function(event) {
+        if (event.data.type === 'streamlit:setComponentValue') {
+            const data = event.data.value;
+            
+            // Cria um elemento hidden para enviar dados para o Streamlit
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.id = 'streamlit-component-value';
+            hiddenInput.value = JSON.stringify(data);
+            document.body.appendChild(hiddenInput);
+            
+            // Dispara evento para o Streamlit detectar
+            const changeEvent = new Event('input', { bubbles: true });
+            hiddenInput.dispatchEvent(changeEvent);
+        }
+    });
+    </script>
+    
+    <div style="display: none;">
+        <input type="text" id="component-value" />
+    </div>
+    
+    <script>
+    // Função para simular input do Streamlit
+    function updateStreamlitValue(data) {
+        const input = document.getElementById('component-value');
+        input.value = JSON.stringify(data);
+        const event = new Event('input', { bubbles: true });
+        input.dispatchEvent(event);
+    }
+    </script>
+    """, height=0)
 
 if __name__ == "__main__":
     main()
