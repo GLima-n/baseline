@@ -5,7 +5,6 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 import time
-import uuid
 
 # --- Configuração da Página (Deve ser a primeira linha) ---
 st.set_page_config(layout="wide", page_title="Gantt Chart Baseline", initial_sidebar_state="expanded")
@@ -20,13 +19,14 @@ try:
         'port': 3306
     }
 except Exception:
-    DB_CONFIG = None # Define como None se falhar para ativar modo offline
+    DB_CONFIG = None # Modo Offline
 
 # --- Inicialização do Session State ---
 if 'pending_snapshots' not in st.session_state:
     st.session_state.pending_snapshots = []
 
 if 'df' not in st.session_state:
+    # Dados de exemplo
     data = {
         'ID_Tarefa': [1, 2, 3, 4, 5, 6],
         'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
@@ -54,7 +54,7 @@ def create_snapshots_table():
     if conn:
         try:
             cursor = conn.cursor()
-            create_table_query = """
+            query = """
             CREATE TABLE IF NOT EXISTS snapshots (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 empreendimento VARCHAR(255) NOT NULL,
@@ -65,7 +65,7 @@ def create_snapshots_table():
                 UNIQUE KEY unique_snapshot (empreendimento, version_name)
             )
             """
-            cursor.execute(create_table_query)
+            cursor.execute(query)
             conn.commit()
             cursor.close()
             conn.close()
@@ -81,8 +81,7 @@ def load_snapshots_from_db():
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT empreendimento, version_name, snapshot_data, created_date FROM snapshots ORDER BY created_at DESC")
-            results = cursor.fetchall()
-            for row in results:
+            for row in cursor.fetchall():
                 emp = row['empreendimento']
                 if emp not in snapshots: snapshots[emp] = {}
                 try:
@@ -100,8 +99,8 @@ def load_snapshots_from_db():
 
 def save_pending_to_aws():
     conn = get_db_connection()
+    # Modo Offline
     if not conn:
-        # Modo Offline
         if 'mock_snapshots' not in st.session_state: st.session_state.mock_snapshots = {}
         for item in st.session_state.pending_snapshots:
             emp = item['empreendimento']
@@ -111,7 +110,8 @@ def save_pending_to_aws():
             }
         st.session_state.pending_snapshots = []
         return True
-
+    
+    # Modo Online
     try:
         cursor = conn.cursor()
         query = """
@@ -143,7 +143,7 @@ def delete_snapshot(empreendimento, version_name):
         except Error: return False
     return False
 
-# --- Lógica de Buffer ---
+# --- Lógica de Buffer (Staging) ---
 
 def buffer_new_snapshot(df, empreendimento):
     df_emp = df[df['Empreendimento'] == empreendimento].copy()
@@ -177,135 +177,148 @@ def buffer_new_snapshot(df, empreendimento):
     })
     return version_name
 
-# --- MENU DE CONTEXTO ROBUSTO (SOLUÇÃO FINAL) ---
+# --- MENU DE CONTEXTO FINAL (ESTÁVEL) ---
 
-def create_context_menu_safe(selected_empreendimento, has_unsaved_changes):
-    # Gera IDs únicos para evitar conflitos de cache do Streamlit
-    uid = str(uuid.uuid4())[:8]
-    menu_id = f"ctx_menu_{uid}"
-    
+def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
+    """
+    Cria um menu estável com nomes de função fixos e botão de backup visual.
+    """
     js_unsaved = "true" if has_unsaved_changes else "false"
 
     html_code = f"""
     <style>
-        /* Área de Clique */
-        .gantt-area-final {{
+        /* Área do Gantt */
+        .gantt-box {{
             height: 300px;
-            background-color: #f8f9fa;
-            border: 2px dashed #ff4b4b; /* Borda vermelha visível */
+            background-color: #fdfdfd;
+            border: 2px dashed #aaa;
             border-radius: 8px;
+            position: relative;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            cursor: context-menu;
-            transition: background 0.2s;
-            user-select: none; /* Importante para evitar seleção de texto */
+            user-select: none;
+            transition: all 0.3s;
         }}
-        .gantt-area-final:hover {{
-            background-color: #fff0f0;
+        .gantt-box:hover {{
+            border-color: #ff4b4b;
+            background-color: #fff5f5;
         }}
-        .gantt-area-final:active {{
-            background-color: #ffe0e0; /* Feedback visual de clique */
+        
+        /* Botão de Backup (Engrenagem) */
+        .gantt-settings-btn {{
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 24px;
+            cursor: pointer;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+            background: none;
+            border: none;
+            padding: 5px;
+        }}
+        .gantt-settings-btn:hover {{
+            opacity: 1;
+            transform: scale(1.1);
         }}
 
-        /* Menu Customizado */
-        #{menu_id} {{
-            display: none;
+        /* Menu Flutuante (Classe Fixa para facilitar remoção) */
+        .custom-gantt-menu {{
             position: fixed;
-            z-index: 999999;
-            width: 200px;
-            background-color: #ffffff;
+            z-index: 9999999;
+            background: white;
+            border: 1px solid #ddd;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
             border-radius: 6px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-            border: 1px solid #e0e0e0;
-            font-family: "Source Sans Pro", sans-serif;
-            overflow: hidden;
+            width: 200px;
+            display: none;
+            font-family: sans-serif;
         }}
-        .ctx-item-final {{
+        
+        .menu-item {{
             padding: 12px 16px;
             cursor: pointer;
             color: #333;
             font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            transition: background 0.1s;
+            border-bottom: 1px solid #f0f0f0;
         }}
-        .ctx-item-final:hover {{
+        .menu-item:hover {{
             background-color: #ff4b4b;
             color: white;
         }}
-        .ctx-separator {{
-            height: 1px;
-            background-color: #eee;
-            margin: 0;
-        }}
+        .menu-item:last-child {{ border-bottom: none; }}
     </style>
 
-    <div class="gantt-area-final" oncontextmenu="handleRightClick_{uid}(event)">
-        <h3 style="margin:0; color:#333; pointer-events:none;">📈 Área Gantt: {selected_empreendimento}</h3>
-        <p style="color:#666; pointer-events:none;">Clique com Botão Direito Aqui</p>
+    <div class="gantt-box" oncontextmenu="window.abrirMenuGantt(event)">
+        
+        <button class="gantt-settings-btn" onclick="window.abrirMenuGantt(event, true)" title="Abrir Menu de Snapshot">
+            ⚙️
+        </button>
+        
+        <h3 style="margin:0; color:#444; pointer-events:none;">📈 Gantt: {selected_empreendimento}</h3>
+        <p style="color:#888; font-size:14px; pointer-events:none;">Clique com <b>Botão Direito</b> ou na <b>Engrenagem</b></p>
     </div>
 
     <script>
-    // Cria o menu dinamicamente no BODY para evitar ser cortado
     (function() {{
-        // 1. Configura proteção de saída
+        // 1. Proteção de Saída
         if ({js_unsaved}) {{
-            window.onbeforeunload = function(e) {{ e.returnValue = 'Dados pendentes!'; return 'Dados pendentes!'; }};
+            window.onbeforeunload = (e) => {{ e.returnValue = 'Dados pendentes!'; return 'Dados pendentes!'; }};
         }} else {{
             window.onbeforeunload = null;
         }}
 
-        // 2. Remove menus antigos (limpeza)
-        const existingMenu = document.getElementById("{menu_id}");
-        if (existingMenu) existingMenu.remove();
+        // 2. Limpa menus antigos (Usa Classe, não ID aleatório)
+        document.querySelectorAll('.custom-gantt-menu').forEach(el => el.remove());
 
-        // 3. Cria o HTML do Menu
-        const menu = document.createElement("div");
-        menu.id = "{menu_id}";
+        // 3. Cria o Menu Novo
+        const menu = document.createElement('div');
+        menu.className = 'custom-gantt-menu'; // Classe fixa
         menu.innerHTML = `
-            <div class="ctx-item-final" onclick="sendAction_{uid}('take_snapshot')">📸 Criar Snapshot</div>
-            <div class="ctx-separator"></div>
-            <div class="ctx-item-final" onclick="sendAction_{uid}('view_details')">👁️ Ver Detalhes</div>
+            <div class="menu-item" onclick="window.acaoGantt('take_snapshot')">📸 Criar Snapshot</div>
+            <div class="menu-item" onclick="window.acaoGantt('view_details')">👁️ Ver Detalhes</div>
         `;
         document.body.appendChild(menu);
 
-        // 4. Define função global de clique direito
-        window.handleRightClick_{uid} = function(e) {{
-            e.preventDefault(); // Bloqueia menu do navegador
-            
-            // Posiciona o menu
-            menu.style.display = "block";
-            menu.style.left = e.pageX + "px";
-            menu.style.top = e.pageY + "px";
+        // 4. Função GLOBAL e ESTÁVEL para abrir o menu
+        // Sobrescreve a função anterior a cada renderização para atualizar as variáveis
+        window.abrirMenuGantt = function(e, isLeftClick = false) {{
+            if (!isLeftClick) e.preventDefault(); // Bloqueia menu nativo se for clique direito
+            e.stopPropagation(); // Impede propagação para o Streamlit
+
+            // Pega posição do mouse
+            // Se foi no botão de engrenagem (isLeftClick), ajusta um pouco
+            const x = e.pageX || (e.clientX + window.scrollX);
+            const y = e.pageY || (e.clientY + window.scrollY);
+
+            menu.style.display = 'block';
+            menu.style.left = (isLeftClick ? x - 180 : x) + 'px'; // Se botão, joga pra esquerda
+            menu.style.top = y + 'px';
         }};
 
-        // 5. Define função global de envio de ação
-        window.sendAction_{uid} = function(action) {{
-            menu.style.display = "none";
-            
-            // Usa URLSearchParams para garantir encoding correto
+        // 5. Função GLOBAL e ESTÁVEL para enviar ação
+        window.acaoGantt = function(acao) {{
+            menu.style.display = 'none';
             const params = new URLSearchParams(window.location.search);
-            params.set("snapshot_action", action);
-            params.set("empreendimento", "{selected_empreendimento}");
-            params.set("ts", Date.now());
-            
+            params.set('snapshot_action', acao);
+            params.set('empreendimento', "{selected_empreendimento}");
+            params.set('ts', Date.now()); // Força reload
             window.location.search = params.toString();
         }};
 
-        // 6. Fecha menu ao clicar fora (qualquer clique na página)
-        window.addEventListener("click", function(e) {{
-            if (menu && !menu.contains(e.target)) {{
-                menu.style.display = "none";
+        // 6. Fecha ao clicar fora
+        const closeHandler = (e) => {{
+            if (menu && menu.style.display === 'block' && !menu.contains(e.target)) {{
+                menu.style.display = 'none';
             }}
-        }});
+        }};
         
-        // 7. Fecha menu com ESC
-        window.addEventListener("keydown", function(e) {{
-            if (e.key === "Escape" && menu) menu.style.display = "none";
-        }});
+        // Remove listener antigo se houver (para evitar acumulo)
+        if (window.globalGanttClose) document.removeEventListener('click', window.globalGanttClose);
+        window.globalGanttClose = closeHandler;
+        document.addEventListener('click', window.globalGanttClose);
 
     }})();
     </script>
@@ -314,74 +327,69 @@ def create_context_menu_safe(selected_empreendimento, has_unsaved_changes):
 
 def process_url_actions():
     try:
-        # Compatibilidade com novas versões do Streamlit
         query = st.query_params
         action = query.get('snapshot_action')
         emp = query.get('empreendimento')
         
         if action == 'take_snapshot' and emp:
-            try:
-                v_name = buffer_new_snapshot(st.session_state.df, emp)
-                st.toast(f"Snapshot {v_name} na memória!", icon="💾")
-            except Exception as e:
-                st.error(f"Erro: {e}")
-            
+            v_name = buffer_new_snapshot(st.session_state.df, emp)
+            st.toast(f"Snapshot {v_name} criado!", icon="✅")
             st.query_params.clear()
             time.sleep(0.2)
             st.rerun()
-    except:
-        pass
+    except: pass
 
-# --- APP ---
+# --- APP PRINCIPAL ---
 
 def main():
     st.title("📊 Sistema de Gantt Controlado")
     
+    # Inicializa DB na primeira vez
     if 'db_init' not in st.session_state:
         create_snapshots_table()
         st.session_state.db_init = True
 
+    # Processa comandos da URL
     process_url_actions()
     
-    # Sidebar
+    # Sidebar e Dados
     df = st.session_state.df
     emps = df['Empreendimento'].unique()
     selected_emp = st.sidebar.selectbox("Empreendimento", emps)
     df_filtered = df[df['Empreendimento'] == selected_emp]
     
-    # --- Lógica de Pendentes ---
+    # Lógica de Pendentes
     pending_count = len(st.session_state.pending_snapshots)
     if pending_count > 0:
-        st.sidebar.error(f"⚠️ {pending_count} Itens Pendentes")
-        if st.sidebar.button("☁️ Enviar para AWS", type="primary"):
+        st.sidebar.error(f"⚠️ {pending_count} Pendentes")
+        c1, c2 = st.sidebar.columns(2)
+        if c1.button("☁️ Salvar", type="primary"):
             if save_pending_to_aws():
-                st.success("Salvo!")
-                time.sleep(0.5)
-                st.rerun()
-        if st.sidebar.button("🗑️ Limpar"):
-            st.session_state.pending_snapshots = []
-            st.rerun()
+                st.success("Salvo!"); time.sleep(0.5); st.rerun()
+        if c2.button("🗑️ Limpar"):
+            st.session_state.pending_snapshots = []; st.rerun()
     else:
         st.sidebar.success("✅ Sincronizado")
         
-    # Layout Principal
-    c1, c2 = st.columns([3, 1])
+    # Layout
+    col_main, col_hist = st.columns([3, 1])
     
-    with c1:
-        # INJEÇÃO DO HTML SEGURO
-        html_code = create_context_menu_safe(selected_emp, pending_count > 0)
+    with col_main:
+        # INJEÇÃO DO HTML/JS
+        html_code = create_context_menu_stable(selected_emp, pending_count > 0)
         st.markdown(html_code, unsafe_allow_html=True)
         
         st.dataframe(df_filtered, use_container_width=True)
         
-    with c2:
-        st.write("**Histórico Salvo**")
+    with col_hist:
+        st.write("**Histórico (Banco)**")
         saved = load_snapshots_from_db().get(selected_emp, {})
+        if not saved: st.info("Vazio")
         for k in sorted(saved.keys(), reverse=True):
-            st.text(f"📅 {k}")
-            if st.button("X", key=f"del_{k}"):
-                delete_snapshot(selected_emp, k)
-                st.rerun()
+            c_a, c_b = st.columns([4, 1])
+            c_a.text(f"📅 {k}")
+            if c_b.button("X", key=f"del_{k}"):
+                delete_snapshot(selected_emp, k); st.rerun()
 
 if __name__ == "__main__":
     main()
