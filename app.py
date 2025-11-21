@@ -5,9 +5,8 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 import time
-import textwrap # IMPORTANTE: Usado para corrigir o bug de exibição do HTML
 
-# --- Configuração da Página (Deve ser a primeira linha) ---
+# --- Configuração da Página ---
 st.set_page_config(layout="wide", page_title="Gantt Chart Baseline", initial_sidebar_state="expanded")
 
 # --- Configurações do Banco AWS ---
@@ -20,14 +19,13 @@ try:
         'port': 3306
     }
 except Exception:
-    DB_CONFIG = None # Define como None se falhar (Modo Offline)
+    DB_CONFIG = None # Modo Offline
 
 # --- Inicialização do Session State ---
 if 'pending_snapshots' not in st.session_state:
     st.session_state.pending_snapshots = []
 
 if 'df' not in st.session_state:
-    # Dados de exemplo
     data = {
         'ID_Tarefa': [1, 2, 3, 4, 5, 6],
         'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
@@ -100,7 +98,6 @@ def load_snapshots_from_db():
 
 def save_pending_to_aws():
     conn = get_db_connection()
-    # Modo Offline
     if not conn:
         if 'mock_snapshots' not in st.session_state: st.session_state.mock_snapshots = {}
         for item in st.session_state.pending_snapshots:
@@ -112,7 +109,6 @@ def save_pending_to_aws():
         st.session_state.pending_snapshots = []
         return True
     
-    # Modo Online
     try:
         cursor = conn.cursor()
         query = """
@@ -144,17 +140,13 @@ def delete_snapshot(empreendimento, version_name):
         except Error: return False
     return False
 
-# --- Lógica de Buffer (Staging) ---
-
 def buffer_new_snapshot(df, empreendimento):
     df_emp = df[df['Empreendimento'] == empreendimento].copy()
     existing_db = load_snapshots_from_db().get(empreendimento, {})
     existing_names = list(existing_db.keys())
     pending_names = [x['version_name'] for x in st.session_state.pending_snapshots if x['empreendimento'] == empreendimento]
-    
     all_versions = existing_names + pending_names
     p_versions = [k for k in all_versions if k.startswith('P') and k.split('-')[0][1:].isdigit()]
-    
     next_n = 1
     if p_versions:
         max_n = max([int(v.split('-')[0][1:]) for v in p_versions if v.split('-')[0][1:].isdigit()] + [0])
@@ -178,18 +170,18 @@ def buffer_new_snapshot(df, empreendimento):
     })
     return version_name
 
-# --- MENU DE CONTEXTO FINAL (CORRIGIDO) ---
+# --- FUNÇÃO DE HTML CORRIGIDA (LIMPEZA DE ESPAÇOS) ---
+
+def clean_html(html_string):
+    """Remove espaços no início de cada linha para evitar bug de Code Block no Streamlit."""
+    return "\n".join([line.strip() for line in html_string.splitlines()])
 
 def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
-    """
-    Cria um menu estável. 
-    Usa textwrap.dedent para GARANTIR que o HTML seja renderizado e não exibido como texto.
-    """
     js_unsaved = "true" if has_unsaved_changes else "false"
 
-    html_code = textwrap.dedent(f"""
+    # Definimos o CSS e HTML cru
+    raw_html = f"""
     <style>
-        /* Área do Gantt */
         .gantt-box {{
             height: 300px;
             background-color: #fdfdfd;
@@ -207,16 +199,13 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             border-color: #ff4b4b;
             background-color: #fff5f5;
         }}
-        
-        /* Botão de Backup (Engrenagem) */
         .gantt-settings-btn {{
             position: absolute;
             top: 10px;
             right: 10px;
             font-size: 24px;
             cursor: pointer;
-            opacity: 0.5;
-            transition: opacity 0.2s;
+            opacity: 0.6;
             background: none;
             border: none;
             padding: 5px;
@@ -226,8 +215,6 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             opacity: 1;
             transform: scale(1.1);
         }}
-
-        /* Menu Flutuante */
         .custom-gantt-menu {{
             position: fixed;
             z-index: 9999999;
@@ -239,7 +226,6 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             display: none;
             font-family: sans-serif;
         }}
-        
         .menu-item {{
             padding: 12px 16px;
             cursor: pointer;
@@ -251,33 +237,25 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             background-color: #ff4b4b;
             color: white;
         }}
-        .menu-item:last-child {{ border-bottom: none; }}
     </style>
 
     <div class="gantt-box" oncontextmenu="window.abrirMenuGantt(event)">
-        
-        <button class="gantt-settings-btn" onclick="window.abrirMenuGantt(event, true)" title="Abrir Opções">
-            ⚙️
-        </button>
-        
+        <button class="gantt-settings-btn" onclick="window.abrirMenuGantt(event, true)" title="Opções">⚙️</button>
         <h3 style="margin:0; color:#444; pointer-events:none;">📈 Gantt: {selected_empreendimento}</h3>
         <p style="color:#888; font-size:14px; pointer-events:none;">Clique com <b>Botão Direito</b> ou na <b>Engrenagem</b></p>
     </div>
 
     <script>
     (function() {{
-        // 1. Proteção de Saída
         if ({js_unsaved}) {{
             window.onbeforeunload = (e) => {{ e.returnValue = 'Dados pendentes!'; return 'Dados pendentes!'; }};
         }} else {{
             window.onbeforeunload = null;
         }}
 
-        // 2. Limpeza de menus antigos
         const oldMenus = document.querySelectorAll('.custom-gantt-menu');
         oldMenus.forEach(el => el.remove());
 
-        // 3. Criação do Menu
         const menu = document.createElement('div');
         menu.className = 'custom-gantt-menu';
         menu.innerHTML = `
@@ -286,20 +264,16 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
         `;
         document.body.appendChild(menu);
 
-        // 4. Função Abrir Menu
         window.abrirMenuGantt = function(e, isLeftClick = false) {{
             if (!isLeftClick) e.preventDefault(); 
             e.stopPropagation(); 
-
             const x = e.pageX || (e.clientX + window.scrollX);
             const y = e.pageY || (e.clientY + window.scrollY);
-
             menu.style.display = 'block';
             menu.style.left = (isLeftClick ? x - 180 : x) + 'px';
             menu.style.top = y + 'px';
         }};
 
-        // 5. Função Enviar Ação
         window.acaoGantt = function(acao) {{
             menu.style.display = 'none';
             const params = new URLSearchParams(window.location.search);
@@ -309,7 +283,6 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             window.location.search = params.toString();
         }};
 
-        // 6. Fechar ao clicar fora
         const closeHandler = (e) => {{
             if (menu.style.display === 'block' && !menu.contains(e.target)) {{
                 menu.style.display = 'none';
@@ -319,19 +292,18 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
         if (window.globalGanttClose) document.removeEventListener('click', window.globalGanttClose);
         window.globalGanttClose = closeHandler;
         document.addEventListener('click', window.globalGanttClose);
-
     }})();
     </script>
-    """)
+    """
     
-    return html_code
+    # AQUI ESTÁ A CORREÇÃO PRINCIPAL:
+    return clean_html(raw_html)
 
 def process_url_actions():
     try:
         query = st.query_params
         action = query.get('snapshot_action')
         emp = query.get('empreendimento')
-        
         if action == 'take_snapshot' and emp:
             v_name = buffer_new_snapshot(st.session_state.df, emp)
             st.toast(f"Snapshot {v_name} criado!", icon="✅")
@@ -345,21 +317,17 @@ def process_url_actions():
 def main():
     st.title("📊 Sistema de Gantt Controlado")
     
-    # Inicializa DB
     if 'db_init' not in st.session_state:
         create_snapshots_table()
         st.session_state.db_init = True
 
-    # Processa URL
     process_url_actions()
     
-    # Sidebar e Dados
     df = st.session_state.df
     emps = df['Empreendimento'].unique()
     selected_emp = st.sidebar.selectbox("Empreendimento", emps)
     df_filtered = df[df['Empreendimento'] == selected_emp]
     
-    # Lógica de Pendentes (Sidebar)
     pending_count = len(st.session_state.pending_snapshots)
     if pending_count > 0:
         st.sidebar.error(f"⚠️ {pending_count} Pendentes")
@@ -372,13 +340,11 @@ def main():
     else:
         st.sidebar.success("✅ Sincronizado")
         
-    # Layout Principal
     col_main, col_hist = st.columns([3, 1])
     
     with col_main:
-        # INJEÇÃO DO HTML/JS
+        # Gera o HTML e LIMPA os espaços antes de enviar pro markdown
         html_code = create_context_menu_stable(selected_emp, pending_count > 0)
-        # unsafe_allow_html=True é OBRIGATÓRIO
         st.markdown(html_code, unsafe_allow_html=True)
         
         st.dataframe(df_filtered, use_container_width=True)
