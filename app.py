@@ -350,7 +350,7 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         list.appendChild(document.createElement('hr'));
         
         // Opções de Restauração/Deleção
-        const snapshots = JSON.parse(`{all_snapshots_json.replace("`", "\\`")}`)
+        const snapshots = {all_snapshots_json}
         const snapshotList = {json.dumps(snapshots_list)};
         
         if (snapshotList.length > 0) {{
@@ -623,7 +623,7 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         list.appendChild(document.createElement('hr'));
         
         // Opções de Restauração/Deleção
-        const snapshots = JSON.parse(`{all_snapshots_json.replace("`", "\\`")}`)
+        const snapshots = {all_snapshots_json}
         const snapshotList = {json.dumps(snapshots_list)};
         
         if (snapshotList.length > 0) {{
