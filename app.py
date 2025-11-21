@@ -6,6 +6,7 @@ import mysql.connector
 from mysql.connector import Error
 import urllib.parse
 from streamlit.components.v1 import html
+import time
 
 # --- Configurações do Banco AWS ---
 try:
@@ -30,16 +31,13 @@ except Exception as e:
 
 # --- Funções de Banco de Dados ---
 
-@st.cache_resource(ttl=3600)  # Cache de 1 hora para a conexão
 def get_db_connection():
-    """Tenta estabelecer e cachear a conexão com o banco de dados."""
+    """Tenta estabelecer conexão com o banco de dados."""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         if conn.is_connected():
-            st.success("✅ Conexão com AWS estabelecida!")
             return conn
         else:
-            st.error("❌ Falha na conexão com AWS")
             return None
     except Error as e:
         st.error(f"❌ Erro de conexão com AWS: {e}")
@@ -47,6 +45,14 @@ def get_db_connection():
     except Exception as e:
         st.error(f"❌ Erro inesperado: {e}")
         return None
+
+def test_connection():
+    """Testa a conexão e retorna status."""
+    conn = get_db_connection()
+    if conn:
+        conn.close()
+        return True
+    return False
 
 def create_snapshots_table():
     """Cria a tabela de snapshots se não existir."""
@@ -107,7 +113,6 @@ def load_snapshots():
                     st.error(f"❌ Erro ao decodificar JSON do snapshot {version_name}")
                     continue
                     
-            st.success(f"✅ {len(results)} snapshots carregados da AWS")
             return snapshots
             
         except Error as e:
@@ -119,7 +124,6 @@ def load_snapshots():
                 conn.close()
     else:
         # Modo offline
-        st.info("🔶 Carregando snapshots do armazenamento local")
         return st.session_state.get('mock_snapshots', {})
 
 def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
@@ -143,10 +147,8 @@ def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
             conn.commit()
             
             if cursor.rowcount > 0:
-                st.success(f"✅ Snapshot '{version_name}' salvo na AWS!")
                 return True
             else:
-                st.warning("⚠️ Nenhuma linha afetada - snapshot pode já existir")
                 return False
                 
         except Error as e:
@@ -169,7 +171,6 @@ def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
             "data": snapshot_data
         }
         
-        st.success(f"✅ Snapshot '{version_name}' salvo localmente (modo offline)")
         return True
 
 def delete_snapshot(empreendimento, version_name):
@@ -184,10 +185,8 @@ def delete_snapshot(empreendimento, version_name):
             conn.commit()
             
             if cursor.rowcount > 0:
-                st.success(f"✅ Snapshot '{version_name}' deletado da AWS!")
                 return True
             else:
-                st.warning(f"⚠️ Snapshot '{version_name}' não encontrado na AWS")
                 return False
                 
         except Error as e:
@@ -203,10 +202,8 @@ def delete_snapshot(empreendimento, version_name):
             version_name in st.session_state.mock_snapshots[empreendimento]):
             
             del st.session_state.mock_snapshots[empreendimento][version_name]
-            st.success(f"✅ Snapshot '{version_name}' deletado localmente (modo offline)")
             return True
             
-        st.warning(f"⚠️ Snapshot '{version_name}' não encontrado localmente")
         return False
 
 # --- Função para criar DataFrame de exemplo ---
@@ -450,18 +447,17 @@ def main():
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
     
-    # Verificação de conexão
+    # Status da conexão
     st.sidebar.markdown("### 🔗 Status da Conexão")
-    conn = get_db_connection()
-    if conn:
+    if test_connection():
         st.sidebar.success("✅ Conectado à AWS")
-        if conn.is_connected():
-            conn.close()
     else:
         st.sidebar.warning("🔶 Modo Offline - Armazenamento Local")
     
-    # Inicialização do banco
-    create_snapshots_table()
+    # Inicialização do banco (apenas uma vez)
+    if 'db_initialized' not in st.session_state:
+        create_snapshots_table()
+        st.session_state.db_initialized = True
     
     # Processa ações do menu primeiro
     process_snapshot_actions()
