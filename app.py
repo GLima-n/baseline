@@ -5,6 +5,8 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 import time
+import textwrap
+import uuid # Importante para gerar IDs únicos
 
 # --- Configuração da Página ---
 st.set_page_config(layout="wide", page_title="Gantt Chart Baseline", initial_sidebar_state="expanded")
@@ -98,6 +100,7 @@ def load_snapshots_from_db():
 
 def save_pending_to_aws():
     conn = get_db_connection()
+    # Offline
     if not conn:
         if 'mock_snapshots' not in st.session_state: st.session_state.mock_snapshots = {}
         for item in st.session_state.pending_snapshots:
@@ -109,6 +112,7 @@ def save_pending_to_aws():
         st.session_state.pending_snapshots = []
         return True
     
+    # Online
     try:
         cursor = conn.cursor()
         query = """
@@ -140,6 +144,8 @@ def delete_snapshot(empreendimento, version_name):
         except Error: return False
     return False
 
+# --- Buffer Logic ---
+
 def buffer_new_snapshot(df, empreendimento):
     df_emp = df[df['Empreendimento'] == empreendimento].copy()
     existing_db = load_snapshots_from_db().get(empreendimento, {})
@@ -170,16 +176,22 @@ def buffer_new_snapshot(df, empreendimento):
     })
     return version_name
 
-# --- FUNÇÃO DE HTML CORRIGIDA (LIMPEZA DE ESPAÇOS) ---
-
 def clean_html(html_string):
-    """Remove espaços no início de cada linha para evitar bug de Code Block no Streamlit."""
     return "\n".join([line.strip() for line in html_string.splitlines()])
+
+# --- FUNÇÃO CORRIGIDA (REACT SAFE) ---
 
 def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
     js_unsaved = "true" if has_unsaved_changes else "false"
+    
+    # Geramos IDs únicos para os elementos para poder selecioná-los via JS
+    # sem causar conflito com outros elementos da página
+    unique_id = str(uuid.uuid4())[:8]
+    box_id = f"gantt-box-{unique_id}"
+    btn_id = f"gantt-btn-{unique_id}"
 
-    # Definimos o CSS e HTML cru
+    # NOTA: Removemos todos os 'onclick' e 'oncontextmenu' do HTML abaixo
+    # Eles serão adicionados via addEventListener no script, evitando o erro do React.
     raw_html = f"""
     <style>
         .gantt-box {{
@@ -239,32 +251,36 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
         }}
     </style>
 
-    <div class="gantt-box" oncontextmenu="window.abrirMenuGantt(event)">
-        <button class="gantt-settings-btn" onclick="window.abrirMenuGantt(event, true)" title="Opções">⚙️</button>
+    <div id="{box_id}" class="gantt-box">
+        <button id="{btn_id}" class="gantt-settings-btn" title="Opções">⚙️</button>
         <h3 style="margin:0; color:#444; pointer-events:none;">📈 Gantt: {selected_empreendimento}</h3>
         <p style="color:#888; font-size:14px; pointer-events:none;">Clique com <b>Botão Direito</b> ou na <b>Engrenagem</b></p>
     </div>
 
     <script>
     (function() {{
+        // 1. Proteção de Saída
         if ({js_unsaved}) {{
             window.onbeforeunload = (e) => {{ e.returnValue = 'Dados pendentes!'; return 'Dados pendentes!'; }};
         }} else {{
             window.onbeforeunload = null;
         }}
 
+        // 2. Limpeza de menus antigos
         const oldMenus = document.querySelectorAll('.custom-gantt-menu');
         oldMenus.forEach(el => el.remove());
 
+        // 3. Criação do Menu
         const menu = document.createElement('div');
         menu.className = 'custom-gantt-menu';
         menu.innerHTML = `
-            <div class="menu-item" onclick="window.acaoGantt('take_snapshot')">📸 Criar Snapshot</div>
-            <div class="menu-item" onclick="window.acaoGantt('view_details')">👁️ Ver Detalhes</div>
+            <div class="menu-item" id="menu-item-snap-{unique_id}">📸 Criar Snapshot</div>
+            <div class="menu-item" id="menu-item-view-{unique_id}">👁️ Ver Detalhes</div>
         `;
         document.body.appendChild(menu);
 
-        window.abrirMenuGantt = function(e, isLeftClick = false) {{
+        // 4. Funções Lógicas
+        function abrirMenuGantt(e, isLeftClick = false) {{
             if (!isLeftClick) e.preventDefault(); 
             e.stopPropagation(); 
             const x = e.pageX || (e.clientX + window.scrollX);
@@ -272,31 +288,60 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             menu.style.display = 'block';
             menu.style.left = (isLeftClick ? x - 180 : x) + 'px';
             menu.style.top = y + 'px';
-        }};
+        }}
 
-        window.acaoGantt = function(acao) {{
+        function acaoGantt(acao) {{
             menu.style.display = 'none';
             const params = new URLSearchParams(window.location.search);
             params.set('snapshot_action', acao);
             params.set('empreendimento', "{selected_empreendimento}");
             params.set('ts', Date.now());
             window.location.search = params.toString();
-        }};
+        }}
 
+        // 5. ADICIONANDO LISTENERS VIA JS (EVITA ERRO REACT)
+        
+        // Listener para o DIV (Botão Direito)
+        const box = document.getElementById('{box_id}');
+        if (box) {{
+            box.addEventListener('contextmenu', function(e) {{
+                abrirMenuGantt(e, false);
+            }});
+        }}
+
+        // Listener para o BOTÃO (Clique Esquerdo)
+        const btn = document.getElementById('{btn_id}');
+        if (btn) {{
+            btn.addEventListener('click', function(e) {{
+                abrirMenuGantt(e, true);
+            }});
+        }}
+
+        // Listeners para os itens do menu (necessário pois removemos onclick do HTML string)
+        document.getElementById('menu-item-snap-{unique_id}').addEventListener('click', function() {{
+            acaoGantt('take_snapshot');
+        }});
+        
+        document.getElementById('menu-item-view-{unique_id}').addEventListener('click', function() {{
+            acaoGantt('view_details');
+        }});
+
+        // Fechar ao clicar fora
         const closeHandler = (e) => {{
-            if (menu.style.display === 'block' && !menu.contains(e.target)) {{
+            if (menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn) {{
                 menu.style.display = 'none';
             }}
         }};
         
+        // Cleanup listener global para não acumular
         if (window.globalGanttClose) document.removeEventListener('click', window.globalGanttClose);
         window.globalGanttClose = closeHandler;
         document.addEventListener('click', window.globalGanttClose);
+
     }})();
     </script>
     """
     
-    # AQUI ESTÁ A CORREÇÃO PRINCIPAL:
     return clean_html(raw_html)
 
 def process_url_actions():
@@ -343,7 +388,7 @@ def main():
     col_main, col_hist = st.columns([3, 1])
     
     with col_main:
-        # Gera o HTML e LIMPA os espaços antes de enviar pro markdown
+        # unsafe_allow_html=True renderiza o HTML limpo + Script que injeta os eventos
         html_code = create_context_menu_stable(selected_emp, pending_count > 0)
         st.markdown(html_code, unsafe_allow_html=True)
         
