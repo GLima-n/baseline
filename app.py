@@ -198,22 +198,115 @@ def take_snapshot(df, empreendimento):
     success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
     
     if success:
+        # Marcar que há dados não salvos na AWS
+        st.session_state.unsaved_changes = True
         return version_name
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Solução Simplificada para Menu de Contexto ---
+# --- Menu de Contexto Atualizado ---
 
-def create_simple_context_menu(selected_empreendimento):
-    """Cria um menu de contexto simples usando apenas HTML/JS básico"""
+def create_context_menu(selected_empreendimento):
+    """Cria um menu de contexto que não recarrega a página inteira"""
     
     html_code = f"""
-<div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
-    <div style="text-align: center;">
-        <h3>Área do Gráfico de Gantt</h3>
-        <p>Clique com o botão direito para abrir o menu de snapshot</p>
-    </div>
-</div>
+<script>
+// Função para criar snapshot via AJAX
+function takeSnapshot() {{
+    // Cria um elemento temporário para acionar o callback do Streamlit
+    const tempInput = document.createElement('input');
+    tempInput.type = 'hidden';
+    tempInput.name = 'take_snapshot';
+    tempInput.value = '{selected_empreendimento}';
+    document.body.appendChild(tempInput);
+    
+    // Dispara um evento que o Streamlit pode detectar
+    const event = new Event('snapshotAction');
+    document.dispatchEvent(event);
+    
+    hideMenu();
+}}
+
+// Função para restaurar snapshot
+function restoreSnapshot() {{
+    const tempInput = document.createElement('input');
+    tempInput.type = 'hidden';
+    tempInput.name = 'restore_snapshot';
+    tempInput.value = '{selected_empreendimento}';
+    document.body.appendChild(tempInput);
+    
+    const event = new Event('snapshotAction');
+    document.dispatchEvent(event);
+    hideMenu();
+}}
+
+// Função para deletar snapshot
+function deleteSnapshot() {{
+    const tempInput = document.createElement('input');
+    tempInput.type = 'hidden';
+    tempInput.name = 'delete_snapshot';
+    tempInput.value = '{selected_empreendimento}';
+    document.body.appendChild(tempInput);
+    
+    const event = new Event('snapshotAction');
+    document.dispatchEvent(event);
+    hideMenu();
+}}
+
+// Cria o menu de contexto
+const menu = document.createElement('div');
+menu.className = 'context-menu';
+menu.id = 'context-menu';
+menu.innerHTML = `
+    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
+`;
+document.body.appendChild(menu);
+
+function showMenu(x, y) {{
+    const menu = document.getElementById('context-menu');
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.display = 'block';
+}}
+
+function hideMenu() {{
+    const menu = document.getElementById('context-menu');
+    menu.style.display = 'none';
+}}
+
+// Event listeners
+document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
+    e.preventDefault();
+    showMenu(e.pageX, e.pageY);
+}});
+
+document.addEventListener('click', function(e) {{
+    const menu = document.getElementById('context-menu');
+    if (menu && !menu.contains(e.target)) {{
+        hideMenu();
+    }}
+}});
+
+// Fecha o menu com ESC
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+        hideMenu();
+    }}
+}});
+
+// Previne o recarregamento da página quando o formulário é submetido
+document.addEventListener('DOMContentLoaded', function() {{
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {{
+        form.addEventListener('submit', function(e) {{
+            e.preventDefault();
+            return false;
+        }});
+    }});
+}});
+</script>
 
 <style>
 .context-menu {{
@@ -237,99 +330,31 @@ def create_simple_context_menu(selected_empreendimento):
     border-bottom: none;
 }}
 </style>
-
-<script>
-// Variável global para armazenar a ação
-let snapshotAction = null;
-
-// Cria o menu de contexto
-const menu = document.createElement('div');
-menu.className = 'context-menu';
-menu.innerHTML = `
-    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
-`;
-document.body.appendChild(menu);
-
-// Funções do menu
-function takeSnapshot() {{
-    snapshotAction = 'take_snapshot';
-    hideMenu();
-    // Usando uma abordagem simples: criar um link que atualiza a URL
-    const link = document.createElement('a');
-    link.href = `?snapshot_action=take_snapshot&empreendimento={selected_empreendimento}`;
-    link.click();
-}}
-
-function restoreSnapshot() {{
-    snapshotAction = 'restore_snapshot';
-    hideMenu();
-    const link = document.createElement('a');
-    link.href = `?snapshot_action=restore_snapshot&empreendimento={selected_empreendimento}`;
-    link.click();
-}}
-
-function deleteSnapshot() {{
-    snapshotAction = 'delete_snapshot';
-    hideMenu();
-    const link = document.createElement('a');
-    link.href = `?snapshot_action=delete_snapshot&empreendimento={selected_empreendimento}`;
-    link.click();
-}}
-
-function showMenu(x, y) {{
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-    menu.style.display = 'block';
-}}
-
-function hideMenu() {{
-    menu.style.display = 'none';
-}}
-
-// Event listeners
-document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
-    e.preventDefault();
-    showMenu(e.pageX, e.pageY);
-}});
-
-document.addEventListener('click', function(e) {{
-    if (!menu.contains(e.target)) {{
-        hideMenu();
-    }}
-}});
-
-// Fecha o menu com ESC
-document.addEventListener('keydown', function(e) {{
-    if (e.key === 'Escape') {{
-        hideMenu();
-    }}
-}});
-</script>
 """
     return html_code
 
 # --- Função para processar ações do menu ---
 
-def process_snapshot_actions():
-    """Processa ações do menu de contexto via query parameters"""
-    query_params = st.query_params
+def process_context_menu_actions():
+    """Processa ações do menu de contexto sem recarregar a página inteira"""
     
-    action = query_params.get('snapshot_action')
-    empreendimento = query_params.get('empreendimento')
-    
-    if action and empreendimento:
-        # Limpa os parâmetros imediatamente
-        st.query_params.clear()
+    # Verifica se há ações pendentes no session_state
+    if 'pending_snapshot_action' in st.session_state:
+        action = st.session_state.pending_snapshot_action
+        empreendimento = st.session_state.pending_snapshot_empreendimento
         
-        df = create_mock_dataframe()
+        # Limpa a ação pendente
+        del st.session_state.pending_snapshot_action
+        del st.session_state.pending_snapshot_empreendimento
+        
+        df = st.session_state.df
         
         if action == 'take_snapshot':
             try:
                 version_name = take_snapshot(df, empreendimento)
                 st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                st.rerun()
+                # Atualiza apenas os snapshots na sidebar
+                st.session_state.snapshots_updated = True
             except Exception as e:
                 st.error(f"❌ Erro ao criar snapshot: {e}")
         elif action == 'restore_snapshot':
@@ -387,22 +412,31 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
     
     st.dataframe(df_final, use_container_width=True)
 
+# --- Função para enviar dados para AWS ---
+
+def send_to_aws():
+    """Simula o envio de dados para AWS"""
+    st.session_state.unsaved_changes = False
+    return True
+
 # --- Aplicação Principal ---
 
 def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
     st.title("📊 Gráfico de Gantt com Versionamento")
     
-    # Inicialização
-    create_snapshots_table()
-    
-    # Processa ações do menu primeiro
-    process_snapshot_actions()
-    
-    # Dados
+    # Inicialização do session_state
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
+    if 'unsaved_changes' not in st.session_state:
+        st.session_state.unsaved_changes = False
+    if 'show_comparison' not in st.session_state:
+        st.session_state.show_comparison = False
     
+    # Inicialização do banco
+    create_snapshots_table()
+    
+    # Dados
     df = st.session_state.df
     snapshots = load_snapshots()
     
@@ -419,13 +453,42 @@ def main():
         try:
             version_name = take_snapshot(df, selected_empreendimento)
             st.success(f"✅ {version_name} criado!")
-            st.rerun()
+            snapshots = load_snapshots()  # Atualiza os snapshots
         except Exception as e:
             st.error(f"❌ Erro: {e}")
     
     if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
-        st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
-        st.rerun()
+        st.session_state.show_comparison = not st.session_state.show_comparison
+    
+    # Seção de envio para AWS
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ☁️ Enviar para AWS")
+    
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    if empreendimento_snapshots:
+        for version_name in sorted(empreendimento_snapshots.keys()):
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                st.write(f"`{version_name}`")
+            with col2:
+                if st.button("☁️", key=f"aws_{version_name}"):
+                    if send_to_aws():
+                        st.sidebar.success(f"✅ {version_name} enviado para AWS!")
+    
+    # Gerenciamento de snapshots na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
+    
+    if empreendimento_snapshots:
+        for version_name in sorted(empreendimento_snapshots.keys()):
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                st.write(f"`{version_name}`")
+            with col2:
+                if st.button("🗑️", key=f"del_{version_name}"):
+                    if delete_snapshot(selected_empreendimento, version_name):
+                        st.sidebar.success(f"✅ {version_name} deletado!")
+                        snapshots = load_snapshots()  # Atualiza os snapshots
     
     # Visualização principal
     col1, col2 = st.columns([2, 1])
@@ -436,7 +499,6 @@ def main():
     
     with col2:
         st.subheader("Snapshots")
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         if empreendimento_snapshots:
             for version in sorted(empreendimento_snapshots.keys()):
                 st.write(f"• {version}")
@@ -446,32 +508,54 @@ def main():
     # Menu de contexto
     st.markdown("---")
     st.subheader("Menu de Contexto (Clique com Botão Direito)")
-    context_menu_html = create_simple_context_menu(selected_empreendimento)
-    html(context_menu_html, height=350)
+    
+    # Área do gráfico Gantt
+    st.markdown("""
+    <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
+        <div style="text-align: center;">
+            <h3>Área do Gráfico de Gantt</h3>
+            <p>Clique com o botão direito para abrir o menu de snapshot</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Inclui o menu de contexto
+    context_menu_html = create_context_menu(selected_empreendimento)
+    html(context_menu_html, height=0)
+    
+    # Processa ações do menu de contexto
+    process_context_menu_actions()
     
     # Comparação de períodos
-    if st.session_state.get('show_comparison', False):
+    if st.session_state.show_comparison:
         st.markdown("---")
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         display_period_comparison(df_filtered, empreendimento_snapshots)
     
-    # Gerenciamento de snapshots na sidebar
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
-    
-    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-    if empreendimento_snapshots:
-        for version_name in sorted(empreendimento_snapshots.keys()):
-            col1, col2 = st.sidebar.columns([3, 1])
-            with col1:
-                st.write(f"`{version_name}`")
-            with col2:
-                if st.button("🗑️", key=f"del_{version_name}"):
-                    if delete_snapshot(selected_empreendimento, version_name):
-                        st.success(f"✅ {version_name} deletado!")
-                        st.rerun()
+    # JavaScript para prevenir perda de dados não salvos
+    if st.session_state.unsaved_changes:
+        unsaved_changes_js = """
+        <script>
+        window.addEventListener('beforeunload', function (e) {
+            e.preventDefault();
+            e.returnValue = 'Você tem alterações não salvas. Tem certeza que deseja sair?';
+        });
+        </script>
+        """
+        st.components.v1.html(unsaved_changes_js)
+        st.warning("⚠️ Você tem alterações não salvas. Certifique-se de enviar os dados para AWS antes de sair.")
 
+# Callback para ações do menu de contexto
+def handle_snapshot_action():
+    """Callback para processar ações do menu de contexto"""
+    if 'take_snapshot' in st.session_state:
+        st.session_state.pending_snapshot_action = 'take_snapshot'
+        st.session_state.pending_snapshot_empreendimento = st.session_state.take_snapshot
+        del st.session_state.take_snapshot
+
+# Registra o callback
 if __name__ == "__main__":
+    # Verifica se há ações de snapshot pendentes
+    if 'take_snapshot' in st.session_state:
+        handle_snapshot_action()
+    
     main()
-
-
