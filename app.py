@@ -204,10 +204,10 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto Funcional ---
+# --- Menu de Contexto Corrigido ---
 
 def create_context_menu_component(selected_empreendimento):
-    """Cria o componente do menu de contexto que funciona"""
+    """Cria o componente do menu de contexto sem usar pushState"""
     
     # HTML e CSS do menu
     menu_html = """
@@ -262,7 +262,7 @@ def create_context_menu_component(selected_empreendimento):
     </div>
     """
     
-    # JavaScript para o menu de contexto
+    # JavaScript simplificado e funcional
     js_code = f"""
     <script>
     console.log("Script do menu de contexto carregado");
@@ -273,10 +273,6 @@ def create_context_menu_component(selected_empreendimento):
     const takeSnapshotBtn = document.getElementById('take-snapshot');
     const restoreSnapshotBtn = document.getElementById('restore-snapshot');
     const deleteSnapshotBtn = document.getElementById('delete-snapshot');
-    
-    // Verificar se os elementos existem
-    if (!ganttArea) console.error("Elemento gantt-area não encontrado");
-    if (!contextMenu) console.error("Elemento context-menu não encontrado");
     
     // Função para mostrar o menu
     function showContextMenu(x, y) {{
@@ -291,50 +287,56 @@ def create_context_menu_component(selected_empreendimento):
         contextMenu.style.display = 'none';
     }}
     
-    // Função para executar ação
+    // Função para executar ação - método simplificado
     function executeAction(action) {{
-        console.log("Executando ação:", action);
+        console.log("Executando ação:", action, "para empreendimento:", "{selected_empreendimento}");
         
-        // Criar um formulário temporário para enviar a ação
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.style.display = 'none';
+        // Método 1: Criar um elemento hidden e disparar evento
+        const hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.id = 'context-action-data';
+        hiddenInput.value = JSON.stringify({{
+            action: action,
+            empreendimento: "{selected_empreendimento}",
+            timestamp: new Date().getTime()
+        }});
+        document.body.appendChild(hiddenInput);
         
-        const actionInput = document.createElement('input');
-        actionInput.type = 'hidden';
-        actionInput.name = 'context_menu_action';
-        actionInput.value = action;
-        form.appendChild(actionInput);
-        
-        const empreendimentoInput = document.createElement('input');
-        empreendimentoInput.type = 'hidden';
-        actionInput.name = 'empreendimento';
-        empreendimentoInput.value = '{selected_empreendimento}';
-        form.appendChild(empreendimentoInput);
-        
-        document.body.appendChild(form);
-        
-        // Disparar um evento que o Streamlit pode detectar
+        // Disparar evento customizado
         const event = new CustomEvent('contextMenuAction', {{
             detail: {{
                 action: action,
-                empreendimento: '{selected_empreendimento}'
+                empreendimento: "{selected_empreendimento}"
             }}
         }});
         document.dispatchEvent(event);
         
         hideContextMenu();
         
-        // Também usar URL parameters como fallback
-        const url = new URL(window.location);
-        url.searchParams.set('context_action', action);
-        url.searchParams.set('empreendimento', '{selected_empreendimento}');
-        url.searchParams.set('timestamp', new Date().getTime());
-        window.history.pushState({{}}, '', url);
+        // Método 2: Usar window.parent para comunicação com Streamlit
+        try {{
+            // Enviar mensagem para o parent (Streamlit)
+            window.parent.postMessage({{
+                type: 'CONTEXT_MENU_ACTION',
+                action: action,
+                empreendimento: "{selected_empreendimento}",
+                timestamp: new Date().getTime()
+            }}, '*');
+        }} catch (e) {{
+            console.log("Método window.parent não disponível:", e);
+        }}
         
-        // Forçar recarregamento suave
+        // Método 3: Forçar recarregamento com parâmetros na URL (fallback)
         setTimeout(() => {{
-            window.dispatchEvent(new Event('popstate'));
+            // Criar URL com parâmetros
+            const newUrl = `?context_action=${{action}}&empreendimento={selected_empreendimento}&t=${{new Date().getTime()}}`;
+            
+            // Tentar navegar para a nova URL
+            try {{
+                window.location.href = newUrl;
+            }} catch (e) {{
+                console.log("Não foi possível navegar para a URL:", e);
+            }}
         }}, 100);
     }}
     
@@ -391,15 +393,16 @@ def create_context_menu_component(selected_empreendimento):
 
 def process_context_menu_actions():
     """Processa ações do menu de contexto"""
-    # Verificar parâmetros da URL primeiro
+    # Verificar parâmetros da URL primeiro (método mais confiável)
     query_params = st.query_params
     
     if 'context_action' in query_params and 'empreendimento' in query_params:
         action = query_params['context_action']
         empreendimento = query_params['empreendimento']
         
-        # Limpar os parâmetros
-        st.query_params.clear()
+        # Limpar os parâmetros para evitar loops
+        if 'context_action' in st.query_params:
+            st.query_params.clear()
         
         # Processar a ação
         if action == 'take_snapshot':
@@ -407,6 +410,7 @@ def process_context_menu_actions():
                 version_name = take_snapshot(st.session_state.df, empreendimento)
                 st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
                 st.session_state.snapshots_updated = True
+                # Usar st.rerun() em vez de recarregar a página
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro ao criar snapshot: {e}")
