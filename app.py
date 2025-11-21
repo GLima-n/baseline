@@ -270,19 +270,6 @@ def take_snapshot(df, empreendimento):
 def create_simple_context_menu(selected_empreendimento):
     """Cria um menu de contexto simples usando apenas HTML/JS básico"""
     
-    # Verifica se há uma ação pendente para mostrar feedback
-    feedback_html = ""
-    if st.session_state.get('snapshot_feedback'):
-        feedback_type, feedback_message = st.session_state.snapshot_feedback
-        color = "green" if feedback_type == "success" else "red"
-        feedback_html = f"""
-        <div style="padding: 10px; background-color: {color}20; border: 1px solid {color}; border-radius: 5px; margin: 10px 0;">
-            <strong>{'✅' if feedback_type == 'success' else '❌'} {feedback_message}</strong>
-        </div>
-        """
-        # Limpa o feedback após exibir
-        del st.session_state.snapshot_feedback
-    
     html_code = f"""
 <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
     <div style="text-align: center;">
@@ -290,8 +277,6 @@ def create_simple_context_menu(selected_empreendimento):
         <p>Clique com o botão direito para abrir o menu de snapshot</p>
     </div>
 </div>
-
-{feedback_html}
 
 <style>
 .context-menu {{
@@ -330,42 +315,17 @@ document.body.appendChild(menu);
 // Funções do menu
 function takeSnapshot() {{
     hideMenu();
-    // Usa uma abordagem diferente para evitar recarregar a página
-    const timestamp = new Date().getTime();
-    const event = new CustomEvent('snapshotAction', {{
-        detail: {{
-            action: 'take_snapshot',
-            empreendimento: '{selected_empreendimento}',
-            timestamp: timestamp
-        }}
-    }});
-    window.dispatchEvent(event);
+    window.location.href = `?snapshot_action=take_snapshot&empreendimento={selected_empreendimento}&timestamp=${{Date.now()}}`;
 }}
 
 function restoreSnapshot() {{
     hideMenu();
-    const timestamp = new Date().getTime();
-    const event = new CustomEvent('snapshotAction', {{
-        detail: {{
-            action: 'restore_snapshot', 
-            empreendimento: '{selected_empreendimento}',
-            timestamp: timestamp
-        }}
-    }});
-    window.dispatchEvent(event);
+    window.location.href = `?snapshot_action=restore_snapshot&empreendimento={selected_empreendimento}&timestamp=${{Date.now()}}`;
 }}
 
 function deleteSnapshot() {{
     hideMenu();
-    const timestamp = new Date().getTime();
-    const event = new CustomEvent('snapshotAction', {{
-        detail: {{
-            action: 'delete_snapshot',
-            empreendimento: '{selected_empreendimento}',
-            timestamp: timestamp
-        }}
-    }});
-    window.dispatchEvent(event);
+    window.location.href = `?snapshot_action=delete_snapshot&empreendimento={selected_empreendimento}&timestamp=${{Date.now()}}`;
 }}
 
 function showMenu(x, y) {{
@@ -396,20 +356,6 @@ document.addEventListener('keydown', function(e) {{
         hideMenu();
     }}
 }});
-
-// Listener para eventos customizados do snapshot
-window.addEventListener('snapshotAction', function(e) {{
-    const {{ action, empreendimento, timestamp }} = e.detail;
-    
-    // Envia a ação para o Streamlit via WebSocket
-    if (window.StreamlitComponent) {{
-        window.StreamlitComponent.setComponentValue({{
-            action: action,
-            empreendimento: empreendimento,
-            timestamp: timestamp
-        }});
-    }}
-}});
 </script>
 """
     return html_code
@@ -417,85 +363,29 @@ window.addEventListener('snapshotAction', function(e) {{
 # --- Função para processar ações do menu ---
 
 def process_snapshot_actions():
-    """Processa ações do menu de contexto via eventos customizados"""
-    # Verifica se há uma ação pendente no session_state
-    if 'pending_snapshot_action' in st.session_state:
-        action_data = st.session_state.pending_snapshot_action
-        action = action_data['action']
-        empreendimento = action_data['empreendimento']
-        
-        # Limpa a ação pendente
-        del st.session_state.pending_snapshot_action
+    """Processa ações do menu de contexto via query parameters"""
+    query_params = st.query_params
+    
+    action = query_params.get('snapshot_action')
+    empreendimento = query_params.get('empreendimento')
+    
+    if action and empreendimento:
+        # Limpa os parâmetros imediatamente
+        st.query_params.clear()
         
         df = st.session_state.df
         
         if action == 'take_snapshot':
             try:
                 version_name = take_snapshot(df, empreendimento)
-                st.session_state.snapshot_feedback = ("success", f"Snapshot '{version_name}' criado com sucesso!")
-                # Força atualização apenas do componente
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
                 st.rerun()
             except Exception as e:
-                st.session_state.snapshot_feedback = ("error", f"Erro ao criar snapshot: {e}")
-                st.rerun()
+                st.error(f"❌ Erro ao criar snapshot: {e}")
         elif action == 'restore_snapshot':
-            st.session_state.snapshot_feedback = ("error", "Funcionalidade de restaurar snapshot não implementada")
-            st.rerun()
+            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
         elif action == 'delete_snapshot':
-            st.session_state.snapshot_feedback = ("error", "Funcionalidade de deletar snapshot não implementada via menu")
-
-# --- Componente para capturar eventos JavaScript ---
-
-def create_snapshot_event_handler():
-    """Cria um componente para capturar eventos do JavaScript"""
-    
-    # Componente vazio que será controlado via JavaScript
-    def snapshot_component():
-        # Este componente não renderiza nada visualmente
-        # mas permite comunicação entre JS e Python
-        return
-    
-    # HTML com JavaScript para comunicação
-    event_handler_html = """
-<script>
-// Função para enviar eventos do JavaScript para o Streamlit
-function sendSnapshotAction(actionData) {
-    if (window.Streamlit) {
-        // Usando o método setComponentValue para comunicação
-        window.Streamlit.setComponentValue(actionData);
-    }
-}
-
-// Listener para eventos customizados
-window.addEventListener('snapshotAction', function(e) {
-    const { action, empreendimento, timestamp } = e.detail;
-    sendSnapshotAction({
-        action: action,
-        empreendimento: empreendimento, 
-        timestamp: timestamp
-    });
-});
-
-// Também expõe uma função global para ser chamada diretamente
-window.takeSnapshot = function(empreendimento) {
-    sendSnapshotAction({
-        action: 'take_snapshot',
-        empreendimento: empreendimento,
-        timestamp: new Date().getTime()
-    });
-}
-</script>
-"""
-    
-    # Cria um container vazio com o script
-    html(event_handler_html)
-    
-    # Verifica se há valores do componente
-    if 'component_value' in st.session_state:
-        action_data = st.session_state.component_value
-        st.session_state.pending_snapshot_action = action_data
-        del st.session_state.component_value
-        st.rerun()
+            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
 
 # --- Visualização de Comparação de Período ---
 
@@ -569,10 +459,7 @@ def main():
         create_snapshots_table()
         st.session_state.db_initialized = True
     
-    # Componente para capturar eventos
-    create_snapshot_event_handler()
-    
-    # Processa ações do menu
+    # Processa ações do menu primeiro
     process_snapshot_actions()
     
     # Dados
@@ -592,13 +479,13 @@ def main():
         try:
             version_name = take_snapshot(df, selected_empreendimento)
             st.success(f"✅ {version_name} criado!")
-            # Atualiza apenas os snapshots
-            st.session_state.last_snapshot_update = datetime.now()
+            st.rerun()
         except Exception as e:
             st.error(f"❌ Erro: {e}")
     
     if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
         st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
+        st.rerun()
     
     # Visualização principal
     col1, col2 = st.columns([2, 1])
@@ -616,15 +503,11 @@ def main():
         else:
             st.info("Nenhum snapshot")
     
-    # Menu de contexto - esta é a área que será atualizada
+    # Menu de contexto
     st.markdown("---")
     st.subheader("Menu de Contexto (Clique com Botão Direito)")
-    
-    # Container específico para o menu de contexto
-    context_container = st.container()
-    with context_container:
-        context_menu_html = create_simple_context_menu(selected_empreendimento)
-        html(context_menu_html, height=400)
+    context_menu_html = create_simple_context_menu(selected_empreendimento)
+    html(context_menu_html, height=350)
     
     # Comparação de períodos
     if st.session_state.get('show_comparison', False):
@@ -646,8 +529,7 @@ def main():
                 if st.button("🗑️", key=f"del_{version_name}"):
                     if delete_snapshot(selected_empreendimento, version_name):
                         st.success(f"✅ {version_name} deletado!")
-                        # Marca para atualizar apenas os snapshots
-                        st.session_state.last_snapshot_update = datetime.now()
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
