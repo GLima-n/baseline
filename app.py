@@ -246,9 +246,9 @@ let snapshotAction = null;
 const menu = document.createElement('div');
 menu.className = 'context-menu';
 menu.innerHTML = `
-    <div class="context-menu-item" onclick="takeSnapshot()">📸 Criar Linha de Base</div>
-    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Linha de Base</div>
-    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Linha de Base</div>
+    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
 `;
 document.body.appendChild(menu);
 
@@ -328,14 +328,14 @@ def process_snapshot_actions():
         if action == 'take_snapshot':
             try:
                 version_name = take_snapshot(df, empreendimento)
-                st.success(f"✅ Linha de Base '{version_name}' criada com sucesso!")
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Erro ao criar linha de base: {e}")
+                st.error(f"❌ Erro ao criar snapshot: {e}")
         elif action == 'restore_snapshot':
-            st.warning("🔄 Funcionalidade de restaurar linha de base não implementada")
+            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
         elif action == 'delete_snapshot':
-            st.warning("🗑️ Funcionalidade de deletar linha de base não implementada via menu")
+            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
 
 # --- Visualização de Comparação de Período ---
 
@@ -411,10 +411,17 @@ def main():
     selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
     df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
     
-    # REMOVIDO: Botão de criar snapshot da sidebar
-    # Apenas mantemos o botão de comparação de períodos
+    # Botões de ação na sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📊 Ações de Análise")
+    st.sidebar.markdown("### 📸 Ações Rápidas")
+    
+    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True):
+        try:
+            version_name = take_snapshot(df, selected_empreendimento)
+            st.success(f"✅ {version_name} criado!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro: {e}")
     
     if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
         st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
@@ -428,18 +435,17 @@ def main():
         st.dataframe(df_filtered, use_container_width=True)
     
     with col2:
-        st.subheader("Linhas de Base")
+        st.subheader("Snapshots")
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         if empreendimento_snapshots:
             for version in sorted(empreendimento_snapshots.keys()):
                 st.write(f"• {version}")
         else:
-            st.info("Nenhuma linha de base criada")
+            st.info("Nenhum snapshot")
     
-    # Menu de contexto - AGORA É O ÚNICO LOCAL PARA CRIAR LINHAS DE BASE
+    # Menu de contexto
     st.markdown("---")
-    st.subheader("Menu de Contexto (Clique com Botão Direito na Área Abaixo)")
-    st.info("💡 Use o botão direito do mouse na área abaixo para criar, restaurar ou deletar linhas de base")
+    st.subheader("Menu de Contexto (Clique com Botão Direito)")
     context_menu_html = create_simple_context_menu(selected_empreendimento)
     html(context_menu_html, height=350)
     
@@ -449,9 +455,9 @@ def main():
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         display_period_comparison(df_filtered, empreendimento_snapshots)
     
-    # Gerenciamento de snapshots na sidebar (apenas deletar)
+    # Gerenciamento de snapshots na sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💾 Gerenciar Linhas de Base")
+    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
     
     empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
     if empreendimento_snapshots:
@@ -462,10 +468,10 @@ def main():
             with col2:
                 if st.button("🗑️", key=f"del_{version_name}"):
                     if delete_snapshot(selected_empreendimento, version_name):
-                        st.success(f"✅ {version_name} deletada!")
+                        st.success(f"✅ {version_name} deletado!")
                         st.rerun()
-    else:
-        st.sidebar.info("Nenhuma linha de base para gerenciar")
 
 if __name__ == "__main__":
     main()
+
+
