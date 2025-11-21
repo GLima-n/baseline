@@ -237,104 +237,72 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto Corrigido ---
+# --- Menu de Contexto Simplificado e Funcional ---
 
-def create_context_menu_with_callbacks(selected_empreendimento, snapshots):
-    """Cria menu de contexto usando callbacks do Streamlit para evitar reload da página"""
+def create_working_context_menu(selected_empreendimento, snapshots):
+    """Cria um menu de contexto que funciona com st.rerun()"""
     
     empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
     snapshot_options = list(empreendimento_snapshots.keys())
     
-    # Usando JavaScript com callbacks para evitar reload
+    # JavaScript simples que atualiza o session_state via URL
     js_code = f"""
     <script>
     function setupContextMenu() {{
         const ganttArea = document.getElementById('gantt-area');
+        
+        // Cria o menu de contexto
         const menu = document.createElement('div');
+        menu.id = 'contextMenu';
+        menu.style.cssText = `
+            position: fixed;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: none;
+            min-width: 200px;
+        `;
         
         menu.innerHTML = `
-            <div class="context-menu" id="contextMenu" style="
-                position: fixed;
-                background: white;
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
-                z-index: 1000;
-                display: none;
-                min-width: 200px;
-            ">
-                <div class="context-menu-item" onclick="handleTakeSnapshot()" style="
-                    padding: 10px 15px;
-                    cursor: pointer;
-                    border-bottom: 1px solid #eee;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                ">
-                    📸 Tirar Snapshot
-                </div>
-                <div class="context-menu-item" onclick="handleRestoreSnapshot()" style="
-                    padding: 10px 15px;
-                    cursor: pointer;
-                    border-bottom: 1px solid #eee;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    {'' if snapshot_options else 'color: #999; cursor: not-allowed;'}
-                " {'' if snapshot_options else 'onclick="return false"'}>
-                    🔄 Restaurar Snapshot
-                </div>
-                <div class="context-menu-item" onclick="handleDeleteSnapshot()" style="
-                    padding: 10px 15px;
-                    cursor: pointer;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    {'' if snapshot_options else 'color: #999; cursor: not-allowed;'}
-                " {'' if snapshot_options else 'onclick="return false"'}>
-                    🗑️ Deletar Snapshot
-                </div>
+            <div class="menu-item" onclick="handleMenuAction('take_snapshot')" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px;">
+                📸 Tirar Snapshot
+            </div>
+            <div class="menu-item" onclick="handleMenuAction('restore_snapshot')" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px; {'' if snapshot_options else 'color: #999; cursor: not-allowed;'}" {'' if snapshot_options else 'onclick="return false"'}>
+                🔄 Restaurar Snapshot
+            </div>
+            <div class="menu-item" onclick="handleMenuAction('delete_snapshot')" style="padding: 10px 15px; cursor: pointer; display: flex; align-items: center; gap: 8px; {'' if snapshot_options else 'color: #999; cursor: not-allowed;'}" {'' if snapshot_options else 'onclick="return false"'}>
+                🗑️ Deletar Snapshot
             </div>
         `;
         
         document.body.appendChild(menu);
-        const contextMenu = document.getElementById('contextMenu');
         
-        // Funções de handler
-        window.handleTakeSnapshot = function() {{
-            // Usando parent para acessar o Streamlit
-            if (window.parent && window.parent.streamlitApi) {{
-                window.parent.streamlitApi.runCallback('take_snapshot');
-            }}
-            hideMenu();
+        // Função para lidar com ações do menu
+        window.handleMenuAction = function(action) {{
+            // Atualiza a URL com os parâmetros da ação
+            const newUrl = new URL(window.location);
+            newUrl.searchParams.set('context_action', action);
+            newUrl.searchParams.set('empreendimento', '{selected_empreendimento}');
+            window.history.pushState({{}}, '', newUrl);
+            
+            // Esconde o menu
+            document.getElementById('contextMenu').style.display = 'none';
+            
+            // Dispara um evento customizado para o Streamlit detectar a mudança
+            window.dispatchEvent(new Event('popstate'));
         }};
         
-        window.handleRestoreSnapshot = function() {{
-            if ({'true' if snapshot_options else 'false'}) {{
-                if (window.parent && window.parent.streamlitApi) {{
-                    window.parent.streamlitApi.runCallback('restore_snapshot');
-                }}
-                hideMenu();
-            }}
-        }};
-        
-        window.handleDeleteSnapshot = function() {{
-            if ({'true' if snapshot_options else 'false'}) {{
-                if (window.parent && window.parent.streamlitApi) {{
-                    window.parent.streamlitApi.runCallback('delete_snapshot');
-                }}
-                hideMenu();
-            }}
-        }};
-        
+        // Mostrar/ocultar menu
         function showMenu(x, y) {{
-            contextMenu.style.left = x + 'px';
-            contextMenu.style.top = y + 'px';
-            contextMenu.style.display = 'block';
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+            menu.style.display = 'block';
         }}
         
         function hideMenu() {{
-            contextMenu.style.display = 'none';
+            menu.style.display = 'none';
         }}
         
         // Event listeners
@@ -344,7 +312,7 @@ def create_context_menu_with_callbacks(selected_empreendimento, snapshots):
         }});
         
         document.addEventListener('click', function(e) {{
-            if (!contextMenu.contains(e.target)) {{
+            if (!menu.contains(e.target)) {{
                 hideMenu();
             }}
         }});
@@ -356,7 +324,7 @@ def create_context_menu_with_callbacks(selected_empreendimento, snapshots):
         }});
     }}
     
-    // Inicializa quando o documento estiver pronto
+    // Inicializa quando a página carregar
     if (document.readyState === 'loading') {{
         document.addEventListener('DOMContentLoaded', setupContextMenu);
     }} else {{
@@ -365,7 +333,6 @@ def create_context_menu_with_callbacks(selected_empreendimento, snapshots):
     </script>
     """
     
-    # HTML da área do Gantt
     html_content = f"""
     <div id="gantt-area" style="
         height: 300px; 
@@ -391,104 +358,107 @@ def create_context_menu_with_callbacks(selected_empreendimento, snapshots):
     
     return html_content
 
-# --- Callbacks para ações do menu ---
+# --- Processador de Ações do Menu de Contexto ---
 
-def setup_context_menu_callbacks(selected_empreendimento):
-    """Configura callbacks para as ações do menu de contexto"""
+def process_context_menu_actions():
+    """Processa ações do menu de contexto via query parameters"""
+    query_params = st.query_params
     
-    # Callback para tirar snapshot
-    if st.button("📸 Tirar Snapshot", key="context_take_snapshot", use_container_width=True):
-        try:
-            version_name = take_snapshot(st.session_state.df, selected_empreendimento)
-            st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+    action = query_params.get("context_action")
+    empreendimento = query_params.get("empreendimento")
+    
+    if action and empreendimento:
+        # Limpa os parâmetros imediatamente para evitar execução múltipla
+        st.query_params.clear()
+        
+        if action == "take_snapshot":
+            try:
+                version_name = take_snapshot(st.session_state.df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso via menu de contexto!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot via menu de contexto: {e}")
+        
+        elif action == "restore_snapshot":
+            st.session_state.show_restore_modal = True
+            st.session_state.restore_empreendimento = empreendimento
             st.rerun()
-        except Exception as e:
-            st.error(f"❌ Erro ao criar snapshot: {e}")
-    
-    # Callback para restaurar snapshot
-    if st.button("🔄 Restaurar Snapshot", key="context_restore_snapshot", use_container_width=True):
-        st.session_state.show_restore_modal = True
-        st.session_state.restore_empreendimento = selected_empreendimento
-        st.rerun()
-    
-    # Callback para deletar snapshot
-    if st.button("🗑️ Deletar Snapshot", key="context_delete_snapshot", use_container_width=True):
-        st.session_state.show_delete_modal = True
-        st.session_state.delete_empreendimento = selected_empreendimento
-        st.rerun()
+        
+        elif action == "delete_snapshot":
+            st.session_state.show_delete_modal = True
+            st.session_state.delete_empreendimento = empreendimento
+            st.rerun()
 
 # --- Modais para Restauração e Deleção ---
 
 def show_restore_modal(empreendimento, snapshots):
     """Modal para selecionar snapshot para restauração"""
-    with st.container():
-        st.markdown("---")
-        st.subheader("🔄 Restaurar Snapshot")
-        
-        empreendimento_snapshots = snapshots.get(empreendimento, {})
-        if not empreendimento_snapshots:
-            st.warning("Nenhum snapshot disponível para restauração")
-            if st.button("Fechar", key="close_restore_empty"):
-                st.session_state.show_restore_modal = False
-                st.rerun()
-            return
-        
-        version_options = list(empreendimento_snapshots.keys())
-        selected_version = st.selectbox("Selecione o snapshot para restaurar:", version_options, key="restore_select")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Restaurar", use_container_width=True, key="confirm_restore"):
-                df_updated = restore_snapshot_to_dataframe(
-                    st.session_state.df, empreendimento, selected_version, snapshots
-                )
-                st.session_state.df = df_updated
-                st.session_state.show_restore_modal = False
-                st.success(f"✅ Snapshot '{selected_version}' restaurado com sucesso!")
-                st.rerun()
-        
-        with col2:
-            if st.button("❌ Cancelar", use_container_width=True, key="cancel_restore"):
-                st.session_state.show_restore_modal = False
-                st.rerun()
-        
-        # Preview do snapshot
-        st.markdown("**Preview dos dados:**")
-        snapshot_data = empreendimento_snapshots[selected_version]['data']
-        df_preview = pd.DataFrame(snapshot_data)
-        st.dataframe(df_preview, use_container_width=True)
+    st.markdown("---")
+    st.subheader("🔄 Restaurar Snapshot")
+    
+    empreendimento_snapshots = snapshots.get(empreendimento, {})
+    if not empreendimento_snapshots:
+        st.warning("Nenhum snapshot disponível para restauração")
+        if st.button("Fechar", key="close_restore_empty"):
+            st.session_state.show_restore_modal = False
+            st.rerun()
+        return
+    
+    version_options = list(empreendimento_snapshots.keys())
+    selected_version = st.selectbox("Selecione o snapshot para restaurar:", version_options, key="restore_select")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Restaurar", use_container_width=True, key="confirm_restore"):
+            df_updated = restore_snapshot_to_dataframe(
+                st.session_state.df, empreendimento, selected_version, snapshots
+            )
+            st.session_state.df = df_updated
+            st.session_state.show_restore_modal = False
+            st.success(f"✅ Snapshot '{selected_version}' restaurado com sucesso!")
+            st.rerun()
+    
+    with col2:
+        if st.button("❌ Cancelar", use_container_width=True, key="cancel_restore"):
+            st.session_state.show_restore_modal = False
+            st.rerun()
+    
+    # Preview do snapshot
+    st.markdown("**Preview dos dados:**")
+    snapshot_data = empreendimento_snapshots[selected_version]['data']
+    df_preview = pd.DataFrame(snapshot_data)
+    st.dataframe(df_preview, use_container_width=True)
 
 def show_delete_modal(empreendimento, snapshots):
     """Modal para confirmar deleção de snapshot"""
-    with st.container():
-        st.markdown("---")
-        st.subheader("🗑️ Deletar Snapshot")
-        
-        empreendimento_snapshots = snapshots.get(empreendimento, {})
-        if not empreendimento_snapshots:
-            st.warning("Nenhum snapshot disponível para deleção")
-            if st.button("Fechar", key="close_delete_empty"):
+    st.markdown("---")
+    st.subheader("🗑️ Deletar Snapshot")
+    
+    empreendimento_snapshots = snapshots.get(empreendimento, {})
+    if not empreendimento_snapshots:
+        st.warning("Nenhum snapshot disponível para deleção")
+        if st.button("Fechar", key="close_delete_empty"):
+            st.session_state.show_delete_modal = False
+            st.rerun()
+        return
+    
+    version_options = list(empreendimento_snapshots.keys())
+    selected_version = st.selectbox("Selecione o snapshot para deletar:", version_options, key="delete_select")
+    
+    st.warning(f"⚠️ Tem certeza que deseja deletar o snapshot '{selected_version}'? Esta ação não pode ser desfeita.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Confirmar Deleção", type="primary", use_container_width=True, key="confirm_delete"):
+            if delete_snapshot(empreendimento, selected_version):
                 st.session_state.show_delete_modal = False
+                st.success(f"✅ Snapshot '{selected_version}' deletado com sucesso!")
                 st.rerun()
-            return
-        
-        version_options = list(empreendimento_snapshots.keys())
-        selected_version = st.selectbox("Selecione o snapshot para deletar:", version_options, key="delete_select")
-        
-        st.warning(f"⚠️ Tem certeza que deseja deletar o snapshot '{selected_version}'? Esta ação não pode ser desfeita.")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Confirmar Deleção", type="primary", use_container_width=True, key="confirm_delete"):
-                if delete_snapshot(empreendimento, selected_version):
-                    st.session_state.show_delete_modal = False
-                    st.success(f"✅ Snapshot '{selected_version}' deletado com sucesso!")
-                    st.rerun()
-        
-        with col2:
-            if st.button("❌ Cancelar", use_container_width=True, key="cancel_delete"):
-                st.session_state.show_delete_modal = False
-                st.rerun()
+    
+    with col2:
+        if st.button("❌ Cancelar", use_container_width=True, key="cancel_delete"):
+            st.session_state.show_delete_modal = False
+            st.rerun()
 
 # --- Visualização de Comparação de Período ---
 
@@ -556,6 +526,9 @@ def main():
     
     create_snapshots_table()
     
+    # Processa ações do menu de contexto PRIMEIRO
+    process_context_menu_actions()
+    
     # Dados
     df = st.session_state.df
     snapshots = load_snapshots()
@@ -599,19 +572,12 @@ def main():
         else:
             st.info("ℹ️ Nenhum snapshot disponível")
     
-    # Menu de contexto corrigido
+    # Menu de contexto funcional
     st.markdown("---")
     st.subheader("🎮 Menu de Contexto (Clique com Botão Direito)")
     
-    # Área do menu de contexto
-    context_menu_html = create_context_menu_with_callbacks(selected_empreendimento, snapshots)
+    context_menu_html = create_working_context_menu(selected_empreendimento, snapshots)
     html(context_menu_html, height=350)
-    
-    # Callbacks (ocultos inicialmente)
-    with st.container():
-        st.markdown("---")
-        st.subheader("Ações do Menu de Contexto")
-        setup_context_menu_callbacks(selected_empreendimento)
     
     # Modais
     if st.session_state.get('show_restore_modal', False):
