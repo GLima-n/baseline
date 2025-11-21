@@ -256,110 +256,134 @@ def buffer_new_snapshot(df, empreendimento):
 
 def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes):
     """
-    Gera o HTML do menu E o script corrigido para bypassar o bloqueio de segurança (CORS/Sandbox).
+    Gera o HTML/JS injetado diretamente no DOM (bypassando o iframe sandbox).
     """
-    
-    # Converte booleano python para string bool js
     js_has_unsaved = str(has_unsaved_changes).lower()
     
     html_code = f"""
-    <div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: crosshair; margin: 20px 0; position: relative;">
-        <div style="text-align: center; pointer-events: none;">
-            <h3>📈 Área do Gráfico de Gantt ({selected_empreendimento})</h3>
-            <p style="color: #666;">Clique com o botão <b>direito</b> aqui para criar um Snapshot</p>
-        </div>
-    </div>
-
     <style>
-    .context-menu {{
+    /* Estilo da área do gráfico */
+    #gantt-area-container {{
+        height: 300px; 
+        border: 2px dashed #ccc; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        background-color: #f9f9f9; 
+        cursor: context-menu; /* Cursor correto para clique direito */
+        margin: 20px 0; 
+        border-radius: 8px;
+        transition: background 0.3s;
+    }}
+    #gantt-area-container:hover {{
+        background-color: #f1f1f1;
+        border-color: #bbb;
+    }}
+
+    /* Menu de Contexto */
+    .custom-context-menu {{
         position: fixed;
         background: white;
         border: 1px solid #ddd;
         border-radius: 6px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        z-index: 9999;
+        z-index: 999999; /* Z-index alto para ficar acima de tudo */
         display: none;
-        font-family: sans-serif;
+        font-family: "Source Sans Pro", sans-serif;
         font-size: 14px;
         overflow: hidden;
+        min-width: 180px;
     }}
-    .context-menu-item {{
-        padding: 10px 20px;
+    .custom-context-menu-item {{
+        padding: 12px 20px;
         cursor: pointer;
-        transition: background 0.2s;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
+        color: #31333F;
     }}
-    .context-menu-item:hover {{
-        background: #f0f7ff;
-        color: #0068c9;
+    .custom-context-menu-item:hover {{
+        background: #f0f2f6;
+        color: #ff4b4b; /* Cor padrão do Streamlit */
     }}
     </style>
 
+    <div id="gantt-area-container">
+        <div style="text-align: center; pointer-events: none;">
+            <h3 style="margin:0; color: #31333F;">📈 Área do Gráfico de Gantt</h3>
+            <p style="margin:5px 0 0 0; color: #666; font-size: 0.9em;">
+                {selected_empreendimento}<br>
+                <b>Clique com o botão direito aqui</b>
+            </p>
+        </div>
+    </div>
+
+    <div id="custom-context-menu" class="custom-context-menu">
+        <div class="custom-context-menu-item" onclick="triggerSnapshotAction('take_snapshot')">
+            <span>📸</span> Criar Snapshot (Local)
+        </div>
+        <div class="custom-context-menu-item" onclick="triggerSnapshotAction('view_details')">
+            <span>👁️</span> Ver Detalhes
+        </div>
+    </div>
+
     <script>
-    // --- LÓGICA DE PROTEÇÃO CONTRA PERDA DE DADOS ---
-    const hasUnsaved = {js_has_unsaved};
-    
-    // Tenta acessar o pai, mas falha silenciosamente se bloqueado
-    try {{
-        if (window.parent && hasUnsaved) {{
-            window.parent.onbeforeunload = function(e) {{
+    (function() {{
+        // --- 1. Proteção de Dados (Unsaved Changes) ---
+        const hasUnsaved = {js_has_unsaved};
+        
+        // Como estamos no st.markdown, 'window' É a janela principal. Sem hacks.
+        if (hasUnsaved) {{
+            window.onbeforeunload = function(e) {{
                 e = e || window.event;
-                if (e) {{ e.returnValue = 'Você tem snapshots pendentes!'; }}
-                return 'Você tem snapshots pendentes!';
+                if (e) {{ e.returnValue = 'Você tem dados não salvos!'; }}
+                return 'Você tem dados não salvos!';
             }};
-        }} else if (window.parent) {{
-            window.parent.onbeforeunload = null;
+        }} else {{
+            window.onbeforeunload = null;
         }}
-    }} catch (e) {{
-        console.log("Acesso ao window.parent bloqueado pelo navegador (esperado em alguns ambientes).");
-    }}
 
-    // --- MENU DE CONTEXTO ---
-    const menu = document.createElement('div');
-    menu.className = 'context-menu';
-    menu.innerHTML = `
-        <div class="context-menu-item" onclick="triggerAction('take_snapshot')">📸 Criar Snapshot (Local)</div>
-        <div class="context-menu-item" onclick="triggerAction('view_details')">👁️ Ver Detalhes</div>
-    `;
-    document.body.appendChild(menu);
+        // --- 2. Lógica do Menu de Contexto ---
+        const menu = document.getElementById('custom-context-menu');
+        const area = document.getElementById('gantt-area-container');
 
-    // --- CORREÇÃO DO ERRO SECURITYERROR ---
-    function triggerAction(action) {{
-        menu.style.display = 'none';
-        
-        const timestamp = Date.now();
-        // Encode URI Component é essencial para evitar erros com espaços no nome
-        const empSafe = encodeURIComponent("{selected_empreendimento}");
-        
-        // Em vez de window.parent.location = ..., usamos um link target="_top"
-        const link = document.createElement('a');
-        link.href = `?snapshot_action=${{action}}&empreendimento=${{empSafe}}&ts=${{timestamp}}`;
-        link.target = "_top"; // Isso força a navegação na janela principal, bypassando o sandbox
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }}
-
-    const ganttArea = document.getElementById('gantt-area');
-
-    ganttArea.addEventListener('contextmenu', function(e) {{
-        e.preventDefault();
-        menu.style.left = e.pageX + 'px';
-        menu.style.top = e.pageY + 'px';
-        menu.style.display = 'block';
-    }});
-
-    document.addEventListener('click', function(e) {{
-        if (!menu.contains(e.target)) {{
+        // Função global para ser chamada pelo onclick do HTML
+        window.triggerSnapshotAction = function(action) {{
             menu.style.display = 'none';
+            
+            // Manipulação direta da URL (Funciona porque não estamos em iframe)
+            const params = new URLSearchParams(window.location.search);
+            params.set('snapshot_action', action);
+            params.set('empreendimento', "{selected_empreendimento}");
+            params.set('ts', Date.now()); // Timestamp para forçar reload
+            
+            window.location.search = params.toString();
+        }};
+
+        // Evento de clique direito (Context Menu)
+        // Removemos listener anterior para evitar duplicação se o componente re-renderizar
+        if (area) {{
+            area.oncontextmenu = function(e) {{
+                e.preventDefault();
+                menu.style.left = e.pageX + 'px';
+                menu.style.top = e.pageY + 'px';
+                menu.style.display = 'block';
+            }};
         }}
-    }});
-    
-    document.addEventListener('keydown', function(e) {{
-        if (e.key === 'Escape') menu.style.display = 'none';
-    }});
+
+        // Fechar menu ao clicar fora
+        document.addEventListener('click', function(e) {{
+            if (menu && !menu.contains(e.target)) {{
+                menu.style.display = 'none';
+            }}
+        }});
+
+        // Fechar com ESC
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape' && menu) menu.style.display = 'none';
+        }});
+
+    }})();
     </script>
     """
     return html_code
@@ -467,10 +491,13 @@ def main():
     col_main, col_info = st.columns([3, 1])
     
     with col_main:
-        # Injeta o Menu de Contexto com o Script de Proteção
-        # Passamos (pending_count > 0) para ativar ou desativar o aviso de "Unsaved Changes"
+        # --- MUDANÇA AQUI ---
+        # Gera o código HTML/JS
         html_code = create_context_menu_and_warning(selected_emp, has_unsaved_changes=(pending_count > 0))
-        html(html_code, height=350)
+        
+        # USAR st.markdown COM unsafe_allow_html=True
+        # Isso tira o código do iframe sandbox e joga na página real
+        st.markdown(html_code, unsafe_allow_html=True) 
         
         st.subheader("Dados Atuais")
         st.dataframe(df_filtered.head(), use_container_width=True)
@@ -491,4 +518,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
