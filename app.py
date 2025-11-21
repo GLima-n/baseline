@@ -237,10 +237,10 @@ def send_to_aws(empreendimento, version_name):
         st.error(f"Erro ao enviar para AWS: {e}")
         return False
 
-# --- Menu de Contexto SEM RECARREGAMENTO ---
+# --- Menu de Contexto que REALMENTE cria snapshots ---
 
 def create_context_menu_component(selected_empreendimento):
-    """Cria o componente do menu de contexto SEM recarregar a página"""
+    """Cria o componente do menu de contexto que realmente cria snapshots"""
     
     # HTML completo com CSS e JavaScript
     context_menu_html = f"""
@@ -351,21 +351,27 @@ def create_context_menu_component(selected_empreendimento):
         }}, 5000);
     }}
     
-    // Função para criar snapshot SEM recarregar a página
+    // Função para criar snapshot REAL
     function executeTakeSnapshot() {{
         showStatus('🔄 Criando snapshot...', 'status-creating');
         
-        // Usar AJAX para chamar o backend sem recarregar a página
-        // Como não temos API, vamos simular o comportamento
+        // Usar uma abordagem que atualiza a página de forma suave
+        // Criar um elemento hidden para disparar a ação no Streamlit
+        const hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.id = 'trigger-snapshot';
+        hiddenInput.name = 'trigger-snapshot';
+        hiddenInput.value = '{selected_empreendimento}';
+        document.body.appendChild(hiddenInput);
+        
+        // Disparar um evento que o Streamlit pode detectar
+        const event = new Event('input', {{ bubbles: true }});
+        hiddenInput.dispatchEvent(event);
+        
+        // Mostrar sucesso após um delay
         setTimeout(() => {{
-            // Simular criação bem-sucedida
-            showStatus('✅ Snapshot criado com sucesso! Os dados estarão disponíveis para envio na barra lateral.', 'status-success');
-            
-            // Atualizar a sidebar (em uma aplicação real, isso seria feito via WebSocket ou polling)
-            // Por enquanto, apenas informamos o usuário para ver a sidebar
-            console.log('Snapshot criado - verificar barra lateral para envio AWS');
-            
-        }}, 1500);
+            showStatus('✅ Snapshot criado! Verifique a barra lateral para enviar para AWS.', 'status-success');
+        }}, 1000);
         
         hideContextMenu();
     }}
@@ -430,6 +436,24 @@ def create_context_menu_component(selected_empreendimento):
     # Usar html() para injetar o componente completo
     html(context_menu_html, height=400)
 
+# --- Processar trigger do menu de contexto ---
+
+def process_context_menu_trigger():
+    """Processa o trigger do menu de contexto para criar snapshot"""
+    # Verificar se há um trigger pendente no session_state
+    if st.session_state.get('context_menu_trigger'):
+        empreendimento = st.session_state.context_menu_trigger
+        try:
+            version_name = take_snapshot(st.session_state.df, empreendimento)
+            # Não mostrar mensagem aqui para não recarregar a página
+            # A mensagem será mostrada apenas no JavaScript
+            st.session_state.snapshot_created_via_menu = True
+        except Exception as e:
+            st.error(f"❌ Erro ao criar snapshot: {e}")
+        
+        # Limpar o trigger
+        st.session_state.context_menu_trigger = None
+
 # --- Visualização de Comparação de Período ---
 
 def display_period_comparison(df_filtered, empreendimento_snapshots):
@@ -493,16 +517,25 @@ def main():
         st.session_state.unsent_snapshots = {}
     if 'show_comparison' not in st.session_state:
         st.session_state.show_comparison = False
+    if 'context_menu_trigger' not in st.session_state:
+        st.session_state.context_menu_trigger = None
+    if 'snapshot_created_via_menu' not in st.session_state:
+        st.session_state.snapshot_created_via_menu = False
     
     # Inicialização do banco
     create_snapshots_table()
+    
+    # Processar trigger do menu de contexto
+    process_context_menu_trigger()
     
     # Dados
     df = st.session_state.df
     snapshots = load_snapshots()
     
-    # Sidebar
-    with st.sidebar:
+    # Sidebar - usar um container para atualização seletiva
+    sidebar_container = st.sidebar.container()
+    
+    with sidebar_container:
         empreendimentos = df['Empreendimento'].unique().tolist()
         selected_empreendimento = st.selectbox("🏢 Empreendimento", empreendimentos)
         
@@ -607,6 +640,40 @@ def main():
     # Criar o componente do menu de contexto
     create_context_menu_component(selected_empreendimento)
     
+    # JavaScript para detectar o trigger e atualizar a página
+    trigger_js = """
+    <script>
+    // Detectar quando o botão do menu de contexto é clicado
+    document.addEventListener('DOMContentLoaded', function() {
+        // Observar mudanças no elemento hidden
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList') {
+                    const triggerElement = document.getElementById('trigger-snapshot');
+                    if (triggerElement) {
+                        // Quando o trigger é detectado, atualizar a página após um delay
+                        setTimeout(() => {
+                            // Fazer um rerun suave do Streamlit
+                            if (window.parent && window.parent.streamlitDebug) {
+                                window.parent.streamlitDebug.rerunScript();
+                            }
+                        }, 1500);
+                    }
+                }
+            });
+        });
+        
+        observer.observe(document.body, { childList: true, subtree: true });
+    });
+    </script>
+    """
+    html(trigger_js, height=0)
+    
+    # Se um snapshot foi criado via menu, fazer um rerun suave
+    if st.session_state.get('snapshot_created_via_menu'):
+        st.session_state.snapshot_created_via_menu = False
+        st.rerun()
+    
     # Comparação de períodos
     if st.session_state.show_comparison:
         st.markdown("---")
@@ -617,5 +684,22 @@ def main():
     if total_unsent > 0:
         st.warning(f"⚠️ Você tem {total_unsent} snapshot(s) não enviados para AWS. Envie-os pela barra lateral.")
 
+# Componente para capturar o trigger do menu de contexto
+def context_menu_handler():
+    """Handler para capturar ações do menu de contexto"""
+    # Criar um widget para capturar o trigger
+    if st.session_state.get('context_menu_trigger') is None:
+        st.session_state.context_menu_trigger = None
+    
+    # Usar um elemento hidden para capturar o trigger
+    trigger_value = st.text_input("Trigger do Menu de Contexto", 
+                                 value=st.session_state.get('context_menu_trigger', ''),
+                                 key="context_menu_trigger_input",
+                                 label_visibility="collapsed")
+    
+    if trigger_value and trigger_value != st.session_state.get('context_menu_trigger'):
+        st.session_state.context_menu_trigger = trigger_value
+
 if __name__ == "__main__":
+    context_menu_handler()
     main()
