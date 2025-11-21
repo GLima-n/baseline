@@ -242,14 +242,12 @@ def send_to_aws(empreendimento, version_name):
 def create_context_menu_component(selected_empreendimento):
     """Cria o componente do menu de contexto que realmente funciona"""
     
-    # Container para o menu de contexto
-    with st.container():
-        st.markdown("### Menu de Contexto - Ações")
+    # Criar um formulário para capturar a ação
+    with st.form(key="context_menu_form", clear_on_submit=True):
+        st.session_state.menu_action = st.hidden("menu_action", value="")
+        submitted = st.form_submit_button("📸 Criar Snapshot via Menu", use_container_width=True)
         
-        # Botão visível para criar snapshot via menu
-        if st.button("📸 Criar Snapshot via Menu de Contexto", 
-                    use_container_width=True, 
-                    key="context_menu_button"):
+        if submitted:
             try:
                 version_name = take_snapshot(st.session_state.df, selected_empreendimento)
                 st.success(f"✅ {version_name} criado com sucesso! Verifique a barra lateral para enviar para AWS.")
@@ -257,7 +255,7 @@ def create_context_menu_component(selected_empreendimento):
             except Exception as e:
                 st.error(f"❌ Erro ao criar snapshot: {e}")
     
-    # HTML completo com CSS e JavaScript para o menu visual
+    # HTML completo com CSS e JavaScript
     context_menu_html = f"""
     <style>
     #context-menu {{
@@ -323,7 +321,6 @@ def create_context_menu_component(selected_empreendimento):
         <div style="text-align: center;">
             <h3>Área do Gráfico de Gantt</h3>
             <p>Clique com o botão direito para abrir o menu de snapshot</p>
-            <p><small>Ou use o botão acima para criar snapshot</small></p>
         </div>
     </div>
 
@@ -373,7 +370,7 @@ def create_context_menu_component(selected_empreendimento):
         
         // Simular criação do snapshot
         setTimeout(() => {{
-            // Clicar no botão do Streamlit
+            // Clicar no botão do formulário Streamlit
             const formButton = document.querySelector('button[data-testid="baseButton-secondary"]');
             if (formButton) {{
                 formButton.click();
