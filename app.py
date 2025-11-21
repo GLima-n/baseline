@@ -237,25 +237,57 @@ def send_to_aws(empreendimento, version_name):
         st.error(f"Erro ao enviar para AWS: {e}")
         return False
 
-# --- Menu de Contexto SIMPLES e FUNCIONAL ---
+# --- Processar ações do menu de contexto ---
+
+def process_context_menu_actions():
+    """Processa ações do menu de contexto via query parameters"""
+    query_params = st.query_params
+    
+    if 'context_action' in query_params and 'empreendimento' in query_params:
+        action = query_params['context_action']
+        empreendimento = query_params['empreendimento']
+        
+        # Limpar os parâmetros para evitar execução múltipla
+        st.query_params.clear()
+        
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(st.session_state.df, empreendimento)
+                # Usar session_state para mostrar mensagem sem recarregar a página
+                st.session_state.context_menu_success = f"✅ {version_name} criado via menu de contexto!"
+                st.session_state.show_context_success = True
+                st.session_state.context_menu_trigger = True
+            except Exception as e:
+                st.session_state.context_menu_error = f"❌ Erro ao criar snapshot: {e}"
+                st.session_state.show_context_error = True
+
+# --- Menu de Contexto SEM RECARREGAMENTO VISÍVEL ---
 
 def create_context_menu_component(selected_empreendimento):
-    """Cria o componente do menu de contexto que realmente funciona"""
+    """Cria o componente do menu de contexto sem recarregamento visível"""
     
-    # Criar um formulário para capturar a ação
-    with st.form(key="context_menu_form", clear_on_submit=True):
-        st.session_state.menu_action = st.hidden("menu_action", value="")
-        submitted = st.form_submit_button("📸 Criar Snapshot via Menu", use_container_width=True)
+    # Mostrar mensagens de sucesso/erro do menu de contexto
+    if st.session_state.get('show_context_success'):
+        # Usar um container vazio para a mensagem (não recarrega a página inteira)
+        success_container = st.empty()
+        success_container.success(st.session_state.context_menu_success)
+        st.session_state.show_context_success = False
         
-        if submitted:
-            try:
-                version_name = take_snapshot(st.session_state.df, selected_empreendimento)
-                st.success(f"✅ {version_name} criado com sucesso! Verifique a barra lateral para enviar para AWS.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot: {e}")
+        # Remover a mensagem após 3 segundos
+        import time
+        time.sleep(3)
+        success_container.empty()
     
-    # HTML completo com CSS e JavaScript
+    if st.session_state.get('show_context_error'):
+        error_container = st.empty()
+        error_container.error(st.session_state.context_menu_error)
+        st.session_state.show_context_error = False
+        
+        import time
+        time.sleep(3)
+        error_container.empty()
+    
+    # HTML completo com CSS e JavaScript para o menu visual
     context_menu_html = f"""
     <style>
     #context-menu {{
@@ -315,6 +347,34 @@ def create_context_menu_component(selected_empreendimento):
         border: 1px solid #f5c6cb;
         color: #721c24;
     }}
+    #hidden-iframe {{
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        border: none;
+        opacity: 0;
+        pointer-events: none;
+    }}
+    .loading-overlay {{
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.8);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 10001;
+        font-family: Arial, sans-serif;
+    }}
+    .loading-spinner {{
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        text-align: center;
+    }}
     </style>
 
     <div id="gantt-area">
@@ -325,6 +385,17 @@ def create_context_menu_component(selected_empreendimento):
     </div>
 
     <div id="snapshot-status"></div>
+
+    <!-- Overlay de loading -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <h3>🔄 Criando Snapshot</h3>
+            <p>Por favor, aguarde...</p>
+        </div>
+    </div>
+
+    <!-- Iframe invisível para carregamentos -->
+    <iframe id="hidden-iframe" name="hidden-iframe"></iframe>
 
     <div id="context-menu">
         <div class="context-menu-item" id="take-snapshot">📸 Tirar Snapshot</div>
@@ -338,6 +409,8 @@ def create_context_menu_component(selected_empreendimento):
     const contextMenu = document.getElementById('context-menu');
     const statusDiv = document.getElementById('snapshot-status');
     const takeSnapshotBtn = document.getElementById('take-snapshot');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const hiddenIframe = document.getElementById('hidden-iframe');
     
     // Função para mostrar o menu
     function showContextMenu(x, y) {{
@@ -349,6 +422,15 @@ def create_context_menu_component(selected_empreendimento):
     // Função para esconder o menu
     function hideContextMenu() {{
         contextMenu.style.display = 'none';
+    }}
+    
+    // Função para mostrar/ocultar loading
+    function showLoading() {{
+        loadingOverlay.style.display = 'flex';
+    }}
+    
+    function hideLoading() {{
+        loadingOverlay.style.display = 'none';
     }}
     
     // Função para mostrar status
@@ -364,20 +446,30 @@ def create_context_menu_component(selected_empreendimento):
         }}, 3000);
     }}
     
-    // Função para criar snapshot REAL
+    // Função para criar snapshot via iframe invisível
     function executeTakeSnapshot() {{
         showStatus('🔄 Criando snapshot...', 'status-creating');
+        showLoading();
         
-        // Simular criação do snapshot
-        setTimeout(() => {{
-            // Clicar no botão do formulário Streamlit
-            const formButton = document.querySelector('button[data-testid="baseButton-secondary"]');
-            if (formButton) {{
-                formButton.click();
-            }}
-            
+        // Criar URL com parâmetros para o Streamlit processar
+        const timestamp = new Date().getTime();
+        const url = `?context_action=take_snapshot&empreendimento={selected_empreendimento}&t=${{timestamp}}`;
+        
+        // Usar iframe invisível para carregar a URL
+        hiddenIframe.src = url;
+        
+        // Quando o iframe terminar de carregar
+        hiddenIframe.onload = function() {{
+            hideLoading();
             showStatus('✅ Snapshot criado! Verifique a barra lateral para enviar para AWS.', 'status-success');
-        }}, 1000);
+            
+            // Forçar uma atualização suave da sidebar após 1 segundo
+            setTimeout(() => {{
+                // Disparar um evento customizado para atualizar a interface
+                const event = new Event('snapshotCreated');
+                document.dispatchEvent(event);
+            }}, 1000);
+        }};
         
         hideContextMenu();
     }}
@@ -436,6 +528,12 @@ def create_context_menu_component(selected_empreendimento):
             e.preventDefault();
         }}
     }}, true);
+    
+    // Atualizar interface quando snapshot for criado
+    document.addEventListener('snapshotCreated', function() {{
+        console.log('Snapshot criado - interface pode ser atualizada');
+        // Aqui você pode adicionar lógica para atualizar elementos específicos
+    }});
     </script>
     """
     
@@ -505,9 +603,18 @@ def main():
         st.session_state.unsent_snapshots = {}
     if 'show_comparison' not in st.session_state:
         st.session_state.show_comparison = False
+    if 'show_context_success' not in st.session_state:
+        st.session_state.show_context_success = False
+    if 'show_context_error' not in st.session_state:
+        st.session_state.show_context_error = False
+    if 'context_menu_trigger' not in st.session_state:
+        st.session_state.context_menu_trigger = False
     
     # Inicialização do banco
     create_snapshots_table()
+    
+    # Processar ações do menu de contexto PRIMEIRO
+    process_context_menu_actions()
     
     # Dados
     df = st.session_state.df
