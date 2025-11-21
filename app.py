@@ -36,7 +36,8 @@ def get_db_connection():
         conn = mysql.connector.connect(**DB_CONFIG)
         return conn
     except Error as e:
-        # st.error(f"Erro ao conectar ao banco de dados: {e}") # Comentado para evitar erro no mock
+        # Se a conexão falhar, retorna None e o código usará o mock.
+        # Não exibe st.error aqui para evitar poluir a tela se for um ambiente sem DB.
         return None
 
 def create_snapshots_table():
@@ -58,6 +59,7 @@ def create_snapshots_table():
             cursor.execute(create_table_query)
             conn.commit()
         except Error as e:
+            # Exibe o erro apenas se a conexão foi bem-sucedida, mas a query falhou
             st.error(f"Erro ao criar tabela: {e}")
         finally:
             if conn and conn.is_connected():
@@ -90,6 +92,7 @@ def load_snapshots():
                 }
             return snapshots
         except Error as e:
+            # Exibe o erro apenas se a conexão foi bem-sucedida, mas a query falhou
             st.error(f"Erro ao carregar snapshots: {e}")
             return {}
         finally:
@@ -313,6 +316,9 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         
     snapshots_list = sorted(all_snapshots.keys())
     
+    # Serializa os dados para o JavaScript
+    all_snapshots_json = json.dumps(all_snapshots)
+    
     # HTML/JS para o menu de contexto
     js_code = f"""
     <script>
@@ -344,7 +350,7 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         list.appendChild(document.createElement('hr'));
         
         // Opções de Restauração/Deleção
-        const snapshots = {json.dumps(all_snapshots)};
+        const snapshots = JSON.parse('{all_snapshots_json.replace("'", "\\'")}')
         const snapshotList = {json.dumps(snapshots_list)};
         
         if (snapshotList.length > 0) {{
@@ -617,7 +623,7 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         list.appendChild(document.createElement('hr'));
         
         // Opções de Restauração/Deleção
-        const snapshots = {json.dumps(all_snapshots)};
+        const snapshots = JSON.parse('{all_snapshots_json.replace("'", "\\'")}')
         const snapshotList = {json.dumps(snapshots_list)};
         
         if (snapshotList.length > 0) {{
