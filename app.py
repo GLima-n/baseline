@@ -550,6 +550,43 @@ def process_context_actions(df, snapshots):
         st.error(f"❌ Erro ao processar ação do menu de contexto: {e}")
         st.query_params.clear()
 
+# --- Função para gerenciar edição de dados ---
+
+def handle_data_editor_changes():
+    """Manipula as mudanças no data_editor e atualiza o DataFrame principal."""
+    if 'data_editor' in st.session_state and st.session_state.data_editor.get('edited_rows'):
+        edited_rows = st.session_state.data_editor['edited_rows']
+        
+        # Cria uma cópia do DataFrame para modificar
+        df_updated = st.session_state.df.copy()
+        
+        # Obtém o empreendimento selecionado
+        selected_empreendimento = st.session_state.selected_empreendimento
+        df_filtered = df_updated[df_updated['Empreendimento'] == selected_empreendimento].copy()
+        
+        # Aplica as mudanças
+        for row_index, changes in edited_rows.items():
+            # Encontra o índice real no DataFrame original
+            filtered_indices = df_filtered.index.tolist()
+            if row_index < len(filtered_indices):
+                original_index = filtered_indices[row_index]
+                
+                # Aplica cada mudança
+                for column, new_value in changes.items():
+                    df_updated.loc[original_index, column] = new_value
+        
+        # Atualiza o DataFrame na sessão
+        st.session_state.df = df_updated
+        
+        # Marca como não salvo
+        st.session_state.unsaved_changes = True
+        
+        # Limpa o estado de edição
+        st.session_state.data_editor = {'edited_rows': {}}
+        
+        # Força rerun para atualizar a interface
+        st.rerun()
+
 # --- Aplicação Principal ---
 
 def main():
@@ -568,7 +605,7 @@ def main():
     if 'selected_empreendimento' not in st.session_state:
         st.session_state.selected_empreendimento = st.session_state.df['Empreendimento'].unique().tolist()[0]
     if 'data_editor' not in st.session_state:
-        st.session_state.data_editor = {}
+        st.session_state.data_editor = {'edited_rows': {}}
         
     # --- Inicialização de Banco de Dados ---
     create_snapshots_table()
@@ -676,34 +713,31 @@ def main():
     
     with col1:
         st.subheader(f"Dados do Projeto: {selected_empreendimento}")
+        
+        # Exibe informações sobre o estado da conexão
+        conn = get_db_connection()
+        if not conn:
+            st.info("🔶 Modo offline: usando armazenamento local (sem conexão com AWS)")
+        
         # Tabela editável para simular a área de contexto
-        st.data_editor(
+        # Usando um key único baseado no empreendimento para evitar conflitos
+        editor_key = f"data_editor_{selected_empreendimento}"
+        
+        edited_df = st.data_editor(
             df_filtered, 
-            key="data_editor", 
+            key=editor_key,
             use_container_width=True,
             hide_index=True,
-            column_order=('ID_Tarefa', 'Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim')
+            column_order=('ID_Tarefa', 'Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim'),
+            num_rows="fixed"
         )
         
-        # Lógica para detectar mudanças no data_editor e atualizar o DF principal
-        if st.session_state.data_editor.get('edited_rows'):
-            # Atualiza o DF principal (st.session_state.df) com as linhas editadas
-            edited_df = pd.DataFrame(st.session_state.data_editor['edited_rows']).T
+        # Botão para aplicar mudanças manualmente
+        if st.button("💾 Aplicar Mudanças", type="primary"):
+            handle_data_editor_changes()
             
-            # Mapeia o ID_Tarefa para o índice do DF original
-            id_map = df_filtered['ID_Tarefa'].to_dict()
-            
-            for row_id, changes in st.session_state.data_editor['edited_rows'].items():
-                original_index = df_filtered.index[row_id]
-                for col, value in changes.items():
-                    st.session_state.df.loc[original_index, col] = value
-            
-            # Marca como não salvo
-            st.session_state.unsaved_changes = True
-            
-            # Limpa o estado de edição para evitar loop
-            st.session_state.data_editor = {}
-            st.rerun() # Rerun para refletir as mudanças no DF principal
+        # Mostra instruções
+        st.info("💡 **Instruções:** Edite os dados acima e clique em 'Aplicar Mudanças' para salvar. Use o menu de contexto (botão direito) para criar snapshots.")
             
     with col2:
         st.subheader("Snapshots AWS")
