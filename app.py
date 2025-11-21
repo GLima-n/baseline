@@ -6,6 +6,7 @@ import mysql.connector
 from mysql.connector import Error
 from streamlit.components.v1 import html
 import time
+import uuid
 
 # --- Configuração da Página (Deve ser a primeira linha) ---
 st.set_page_config(layout="wide", page_title="Gantt Chart Baseline", initial_sidebar_state="expanded")
@@ -254,90 +255,105 @@ def buffer_new_snapshot(df, empreendimento):
 
 # --- Menu de Contexto e Scripts JS ---
 
+
 def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes):
+    # Gera um ID único para esta renderização para evitar cache do navegador
+    unique_id = str(uuid.uuid4())[:8]
+    container_id = f"gantt-container-{unique_id}"
+    menu_id = f"ctx-menu-{unique_id}"
+    
     js_has_unsaved = str(has_unsaved_changes).lower()
     
     html_code = f"""
     <style>
-    #gantt-area-container {{
+    #{container_id} {{
         height: 300px; 
-        border: 2px dashed #ccc; 
+        border: 2px dashed #ff4b4b; /* Borda vermelha para você ver a area claramente */
+        background-color: #fdfdfd;
         display: flex; 
         align-items: center; 
         justify-content: center; 
-        background-color: #f9f9f9; 
         cursor: context-menu;
         margin: 20px 0; 
         border-radius: 8px;
-        position: relative; /* Importante para posicionamento */
+        position: relative;
+        transition: all 0.3s ease;
     }}
-    #gantt-area-container:hover {{
-        background-color: #f1f1f1;
-        border-color: #bbb;
+    #{container_id}:hover {{
+        background-color: #fff5f5;
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
     }}
-    .custom-context-menu {{
-        position: fixed; /* Fixed para garantir que fique sobre tudo */
+    
+    /* Menu Flutuante */
+    #{menu_id} {{
+        position: fixed;
+        top: 0;
+        left: 0;
         background: white;
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        z-index: 999999;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-shadow: 4px 4px 12px rgba(0,0,0,0.2);
+        z-index: 99999999; /* Z-Index absurdo para ficar na frente de tudo */
         display: none;
-        font-family: "Source Sans Pro", sans-serif;
-        font-size: 14px;
-        min-width: 180px;
+        min-width: 200px;
+        padding: 5px 0;
+        font-family: sans-serif;
     }}
-    .custom-context-menu-item {{
-        padding: 12px 20px;
+    
+    .ctx-item {{
+        padding: 12px 15px;
         cursor: pointer;
         display: flex;
         align-items: center;
         gap: 10px;
-        color: #31333F;
+        font-size: 14px;
+        color: #333;
+        border-bottom: 1px solid #eee;
     }}
-    .custom-context-menu-item:hover {{
-        background: #f0f2f6;
-        color: #ff4b4b;
+    .ctx-item:hover {{
+        background-color: #ff4b4b;
+        color: white;
     }}
+    .ctx-item:last-child {{ border-bottom: none; }}
     </style>
 
-    <div id="gantt-area-container" class="gantt-target">
+    <div id="{container_id}">
         <div style="text-align: center; pointer-events: none;">
-            <h3 style="margin:0; color: #31333F;">📈 Área do Gráfico de Gantt</h3>
-            <p style="margin:5px 0 0 0; color: #666; font-size: 0.9em;">
-                {selected_empreendimento}<br>
-                <b>Clique com o botão direito aqui</b>
-            </p>
+            <h3>📈 Área do Gráfico ({selected_empreendimento})</h3>
+            <p>Clique com <b>Botão Direito</b> aqui dentro.</p>
+            <small style="color: red;">(Ou segure CTRL + Clique Esquerdo)</small>
         </div>
     </div>
 
-    <div id="custom-context-menu" class="custom-context-menu">
-        <div class="custom-context-menu-item" onclick="triggerSnapshotAction('take_snapshot')">
-            <span>📸</span> Criar Snapshot (Local)
+    <div id="{menu_id}">
+        <div class="ctx-item" onclick="window.triggerSnapshot_{unique_id}('take_snapshot')">
+            <span>📸</span> Criar Snapshot
         </div>
-        <div class="custom-context-menu-item" onclick="triggerSnapshotAction('view_details')">
+        <div class="ctx-item" onclick="window.triggerSnapshot_{unique_id}('view_details')">
             <span>👁️</span> Ver Detalhes
         </div>
     </div>
 
     <script>
-    // Script encapsulado para não poluir escopo global desnecessariamente
     (function() {{
-        // 1. Proteção de Dados (Unsaved Changes)
+        const container = document.getElementById("{container_id}");
+        const menu = document.getElementById("{menu_id}");
+        
+        // 1. Proteção contra fechamento (Unsaved Changes)
         const hasUnsaved = {js_has_unsaved};
         if (hasUnsaved) {{
-            window.onbeforeunload = function(e) {{
-                e = e || window.event;
-                if (e) {{ e.returnValue = 'Dados não salvos!'; }}
-                return 'Dados não salvos!';
+            window.onbeforeunload = (e) => {{
+                e.preventDefault();
+                e.returnValue = 'Dados pendentes!';
+                return 'Dados pendentes!';
             }};
         }} else {{
             window.onbeforeunload = null;
         }}
 
-        // 2. Função de Ação Global
-        window.triggerSnapshotAction = function(action) {{
-            document.getElementById('custom-context-menu').style.display = 'none';
+        // 2. Função de disparo (global para ser acessada pelo HTML)
+        window.triggerSnapshot_{unique_id} = function(action) {{
+            menu.style.display = 'none';
             const params = new URLSearchParams(window.location.search);
             params.set('snapshot_action', action);
             params.set('empreendimento', "{selected_empreendimento}");
@@ -345,53 +361,44 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
             window.location.search = params.toString();
         }};
 
-        // 3. LÓGICA DE EVENTO (DELEGAÇÃO)
-        // Removemos listener antigo para evitar duplicação em reruns do Streamlit
-        if (window.ganttContextMenuHandler) {{
-            document.removeEventListener('contextmenu', window.ganttContextMenuHandler);
-        }}
+        // 3. OUVINTE DE EVENTOS (CAPTURE PHASE = TRUE)
+        // O 'true' no final é o segredo. Ele captura o evento antes do Streamlit.
         
-        if (window.ganttClickHandler) {{
-            document.removeEventListener('click', window.ganttClickHandler);
-        }}
-
-        // Define o novo handler de Context Menu
-        window.ganttContextMenuHandler = function(e) {{
-            // Verifica se o elemento clicado (ou algum pai dele) é o nosso container
-            const target = e.target.closest('#gantt-area-container');
-            const menu = document.getElementById('custom-context-menu');
-
-            if (target && menu) {{
-                e.preventDefault(); // Bloqueia menu nativo do navegador
+        function handleContextMenu(e) {{
+            // Verifica se o clique foi dentro do nosso container
+            if (container.contains(e.target)) {{
+                e.preventDefault(); // Impede menu padrão do navegador
+                e.stopPropagation(); // Impede o Streamlit de saber que houve clique
+                
+                // Posiciona o menu onde o mouse está
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
                 menu.style.display = 'block';
-                menu.style.left = e.pageX + 'px';
-                menu.style.top = e.pageY + 'px';
-            }} else if (menu) {{
-                // Se clicar com direito fora, esconde
+                
+                console.log("Menu aberto em", e.clientX, e.clientY);
+            }} else {{
+                // Se clicar fora, fecha o menu
                 menu.style.display = 'none';
             }}
-        }};
+        }}
 
-        // Define handler para clicar fora (fechar menu)
-        window.ganttClickHandler = function(e) {{
-            const menu = document.getElementById('custom-context-menu');
+        // Remove listener antigo se existir (limpeza)
+        if (window.currentContextHandler) {{
+            document.removeEventListener('contextmenu', window.currentContextHandler, true);
+            document.removeEventListener('click', window.clickCloseHandler);
+        }}
+
+        // Define novos handlers globais
+        window.currentContextHandler = handleContextMenu;
+        window.clickCloseHandler = function(e) {{
             if (menu && !menu.contains(e.target)) {{
                 menu.style.display = 'none';
             }}
         }};
-        
-        // Handler para ESC
-        window.ganttEscHandler = function(e) {{
-             if (e.key === 'Escape') {{
-                 const menu = document.getElementById('custom-context-menu');
-                 if(menu) menu.style.display = 'none';
-             }}
-        }};
 
-        // Adiciona os listeners ao DOCUMENTO (garantia de funcionar mesmo com delay de render)
-        document.addEventListener('contextmenu', window.ganttContextMenuHandler);
-        document.addEventListener('click', window.ganttClickHandler);
-        document.addEventListener('keydown', window.ganttEscHandler);
+        // Adiciona listeners com USECAPTURE = TRUE
+        document.addEventListener('contextmenu', window.currentContextHandler, true);
+        document.addEventListener('click', window.clickCloseHandler);
 
     }})();
     </script>
