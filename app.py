@@ -4,12 +4,8 @@ import json
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
-import time
-import textwrap
-import uuid # Importante para gerar IDs únicos
-
-# --- Configuração da Página ---
-st.set_page_config(layout="wide", page_title="Gantt Chart Baseline", initial_sidebar_state="expanded")
+import urllib.parse
+from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
 try:
@@ -21,41 +17,29 @@ try:
         'port': 3306
     }
 except Exception:
-    DB_CONFIG = None # Modo Offline
-
-# --- Inicialização do Session State ---
-if 'pending_snapshots' not in st.session_state:
-    st.session_state.pending_snapshots = []
-
-if 'df' not in st.session_state:
-    data = {
-        'ID_Tarefa': [1, 2, 3, 4, 5, 6],
-        'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
-        'Tarefa': ['Fase 1', 'Fase 2', 'Design', 'Implementação', 'Teste', 'Deploy'],
-        'Real_Inicio': [pd.to_datetime('2025-10-01'), pd.to_datetime('2025-10-15'), pd.to_datetime('2025-11-01'), pd.to_datetime('2025-11-10'), pd.to_datetime('2025-10-26'), pd.to_datetime('2025-11-21')],
-        'Real_Fim': [pd.to_datetime('2025-10-10'), pd.to_datetime('2025-10-25'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-20'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-25')],
-        'P0_Previsto_Inicio': [pd.to_datetime('2025-09-25'), pd.to_datetime('2025-10-12'), pd.to_datetime('2025-10-28'), pd.to_datetime('2025-11-08'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-18')],
-        'P0_Previsto_Fim': [pd.to_datetime('2025-10-05'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-03'), pd.to_datetime('2025-11-15'), pd.to_datetime('2025-10-30'), pd.to_datetime('2025-11-22')],
+    DB_CONFIG = {
+        'host': "mock_host",
+        'user': "mock_user",
+        'password': "mock_password",
+        'database': "mock_db",
+        'port': 3306
     }
-    df = pd.DataFrame(data)
-    st.session_state.df = df
 
 # --- Funções de Banco de Dados ---
 
 def get_db_connection():
-    if not DB_CONFIG: return None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
-        if conn.is_connected(): return conn
-    except Exception: pass
-    return None
+        return conn
+    except Error as e:
+        return None
 
 def create_snapshots_table():
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            query = """
+            create_table_query = """
             CREATE TABLE IF NOT EXISTS snapshots (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 empreendimento VARCHAR(255) NOT NULL,
@@ -66,343 +50,428 @@ def create_snapshots_table():
                 UNIQUE KEY unique_snapshot (empreendimento, version_name)
             )
             """
-            cursor.execute(query)
+            cursor.execute(create_table_query)
             conn.commit()
-            cursor.close()
-            conn.close()
-        except Error: pass
+        except Error as e:
+            st.error(f"Erro ao criar tabela: {e}")
+        finally:
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
     else:
         if 'mock_snapshots' not in st.session_state:
             st.session_state.mock_snapshots = {}
 
-def load_snapshots_from_db():
+def load_snapshots():
     conn = get_db_connection()
-    snapshots = {}
     if conn:
+        snapshots = {}
         try:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT empreendimento, version_name, snapshot_data, created_date FROM snapshots ORDER BY created_at DESC")
-            for row in cursor.fetchall():
-                emp = row['empreendimento']
-                if emp not in snapshots: snapshots[emp] = {}
-                try:
-                    snapshots[emp][row['version_name']] = {
-                        "date": row['created_date'],
-                        "data": json.loads(row['snapshot_data'])
-                    }
-                except: continue
-            cursor.close()
-            conn.close()
+            query = "SELECT empreendimento, version_name, snapshot_data, created_date FROM snapshots ORDER BY created_at DESC"
+            cursor.execute(query)
+            results = cursor.fetchall()
+            for row in results:
+                empreendimento = row['empreendimento']
+                version_name = row['version_name']
+                if empreendimento not in snapshots:
+                    snapshots[empreendimento] = {}
+                snapshot_data = json.loads(row['snapshot_data'])
+                snapshots[empreendimento][version_name] = {
+                    "date": row['created_date'],
+                    "data": snapshot_data
+                }
             return snapshots
-        except Error: return {}
+        except Error as e:
+            st.error(f"Erro ao carregar snapshots: {e}")
+            return {}
+        finally:
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
     else:
-        return st.session_state.get('mock_snapshots', {})
+        return st.session_state.mock_snapshots
 
-def save_pending_to_aws():
+def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
     conn = get_db_connection()
-    # Offline
-    if not conn:
-        if 'mock_snapshots' not in st.session_state: st.session_state.mock_snapshots = {}
-        for item in st.session_state.pending_snapshots:
-            emp = item['empreendimento']
-            if emp not in st.session_state.mock_snapshots: st.session_state.mock_snapshots[emp] = {}
-            st.session_state.mock_snapshots[emp][item['version_name']] = {
-                "date": item['created_date'], "data": item['snapshot_data']
-            }
-        st.session_state.pending_snapshots = []
+    if conn:
+        try:
+            cursor = conn.cursor()
+            snapshot_json = json.dumps(snapshot_data)
+            insert_query = """
+            INSERT INTO snapshots (empreendimento, version_name, snapshot_data, created_date)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE snapshot_data = VALUES(snapshot_data), created_date = VALUES(created_date)
+            """
+            cursor.execute(insert_query, (empreendimento, version_name, snapshot_json, created_date))
+            conn.commit()
+            return True
+        except Error as e:
+            st.error(f"Erro ao salvar snapshot: {e}")
+            return False
+        finally:
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
+    else:
+        if empreendimento not in st.session_state.mock_snapshots:
+            st.session_state.mock_snapshots[empreendimento] = {}
+        st.session_state.mock_snapshots[empreendimento][version_name] = {
+            "date": created_date,
+            "data": snapshot_data
+        }
         return True
-    
-    # Online
-    try:
-        cursor = conn.cursor()
-        query = """
-        INSERT INTO snapshots (empreendimento, version_name, snapshot_data, created_date)
-        VALUES (%s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE snapshot_data = VALUES(snapshot_data), created_date = VALUES(created_date)
-        """
-        for item in st.session_state.pending_snapshots:
-            cursor.execute(query, (item['empreendimento'], item['version_name'], json.dumps(item['snapshot_data']), item['created_date']))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        st.session_state.pending_snapshots = []
-        return True
-    except Error as e:
-        st.error(f"Erro AWS: {e}")
-        return False
 
 def delete_snapshot(empreendimento, version_name):
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM snapshots WHERE empreendimento = %s AND version_name = %s", (empreendimento, version_name))
+            delete_query = "DELETE FROM snapshots WHERE empreendimento = %s AND version_name = %s"
+            cursor.execute(delete_query, (empreendimento, version_name))
             conn.commit()
-            cursor.close()
-            conn.close()
+            return cursor.rowcount > 0
+        except Error as e:
+            st.error(f"Erro ao deletar snapshot: {e}")
+            return False
+        finally:
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
+    else:
+        if empreendimento in st.session_state.mock_snapshots and version_name in st.session_state.mock_snapshots[empreendimento]:
+            del st.session_state.mock_snapshots[empreendimento][version_name]
             return True
-        except Error: return False
-    return False
+        return False
 
-# --- Buffer Logic ---
+# --- Função para criar DataFrame de exemplo ---
 
-def buffer_new_snapshot(df, empreendimento):
-    df_emp = df[df['Empreendimento'] == empreendimento].copy()
-    existing_db = load_snapshots_from_db().get(empreendimento, {})
-    existing_names = list(existing_db.keys())
-    pending_names = [x['version_name'] for x in st.session_state.pending_snapshots if x['empreendimento'] == empreendimento]
-    all_versions = existing_names + pending_names
-    p_versions = [k for k in all_versions if k.startswith('P') and k.split('-')[0][1:].isdigit()]
+def create_mock_dataframe():
+    data = {
+        'ID_Tarefa': [1, 2, 3, 4, 5, 6],
+        'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
+        'Tarefa': ['Fase 1', 'Fase 2', 'Design', 'Implementação', 'Teste', 'Deploy'],
+        'Real_Inicio': [pd.to_datetime('2025-10-01'), pd.to_datetime('2025-10-15'), pd.to_datetime('2025-11-01'), pd.to_datetime('2025-11-10'), pd.to_datetime('2025-10-26'), pd.to_datetime('2025-11-21')],
+        'Real_Fim': [pd.to_datetime('2025-10-10'), pd.to_datetime('2025-10-25'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-20'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-25')],
+        'P0_Previsto_Inicio': [pd.to_datetime('2025-09-25'), pd.to_datetime('2025-10-12'), pd.to_datetime('2025-10-28'), pd.to_datetime('2025-11-08'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-18')],
+        'P0_Previsto_Fim': [pd.to_datetime('2025-10-05'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-03'), pd.to_datetime('2025-11-15'), pd.to_datetime('2025-10-30'), pd.to_datetime('2025-11-22')],
+    }
+    df = pd.DataFrame(data)
+    df['Previsto_Inicio'] = df['P0_Previsto_Inicio']
+    df['Previsto_Fim'] = df['P0_Previsto_Fim']
+    return df
+
+# --- Lógica de Snapshot ---
+
+def take_snapshot(df, empreendimento):
+    df_empreendimento = df[df['Empreendimento'] == empreendimento].copy()
+    
+    existing_snapshots = load_snapshots()
+    empreendimento_snapshots = existing_snapshots.get(empreendimento, {})
+    existing_versions = [k for k in empreendimento_snapshots.keys() if k.startswith('P') and k.split('-')[0][1:].isdigit()]
+    
     next_n = 1
-    if p_versions:
-        max_n = max([int(v.split('-')[0][1:]) for v in p_versions if v.split('-')[0][1:].isdigit()] + [0])
+    if existing_versions:
+        max_n = 0
+        for version_name in existing_versions:
+            try:
+                n_str = version_name.split('-')[0][1:]
+                n = int(n_str)
+                if n > max_n:
+                    max_n = n
+            except ValueError:
+                continue
         next_n = max_n + 1
     
     version_prefix = f"P{next_n}"
-    current_date = datetime.now().strftime("%d/%m/%Y %H:%M")
-    version_name = f"{version_prefix}-({current_date})"
+    current_date_str = datetime.now().strftime("%d/%m/%Y")
+    version_name = f"{version_prefix}-({current_date_str})"
     
-    df_snap = df_emp[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
-    df_snap['Real_Inicio'] = df_snap['Real_Inicio'].dt.strftime('%Y-%m-%d')
-    df_snap['Real_Fim'] = df_snap['Real_Fim'].dt.strftime('%Y-%m-%d')
+    df_snapshot = df_empreendimento[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
+    df_snapshot['Real_Inicio'] = df_snapshot['Real_Inicio'].dt.strftime('%Y-%m-%d')
+    df_snapshot['Real_Fim'] = df_snapshot['Real_Fim'].dt.strftime('%Y-%m-%d')
     
-    snapshot_data = df_snap.rename(columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}).to_dict('records')
+    snapshot_data = df_snapshot.rename(
+        columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}
+    ).to_dict('records')
 
-    st.session_state.pending_snapshots.append({
-        'empreendimento': empreendimento,
-        'version_name': version_name,
-        'snapshot_data': snapshot_data,
-        'created_date': current_date
-    })
-    return version_name
-
-def clean_html(html_string):
-    return "\n".join([line.strip() for line in html_string.splitlines()])
-
-# --- FUNÇÃO CORRIGIDA (REACT SAFE) ---
-
-def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
-    js_unsaved = "true" if has_unsaved_changes else "false"
+    success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
     
-    # Geramos IDs únicos para os elementos para poder selecioná-los via JS
-    # sem causar conflito com outros elementos da página
-    unique_id = str(uuid.uuid4())[:8]
-    box_id = f"gantt-box-{unique_id}"
-    btn_id = f"gantt-btn-{unique_id}"
+    if success:
+        return version_name
+    else:
+        raise Exception("Falha ao salvar snapshot no banco de dados")
 
-    # NOTA: Removemos todos os 'onclick' e 'oncontextmenu' do HTML abaixo
-    # Eles serão adicionados via addEventListener no script, evitando o erro do React.
-    raw_html = f"""
-    <style>
-        .gantt-box {{
-            height: 300px;
-            background-color: #fdfdfd;
-            border: 2px dashed #aaa;
-            border-radius: 8px;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            user-select: none;
-            transition: all 0.3s;
-        }}
-        .gantt-box:hover {{
-            border-color: #ff4b4b;
-            background-color: #fff5f5;
-        }}
-        .gantt-settings-btn {{
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            font-size: 24px;
-            cursor: pointer;
-            opacity: 0.6;
-            background: none;
-            border: none;
-            padding: 5px;
-            z-index: 10;
-        }}
-        .gantt-settings-btn:hover {{
-            opacity: 1;
-            transform: scale(1.1);
-        }}
-        .custom-gantt-menu {{
-            position: fixed;
-            z-index: 9999999;
-            background: white;
-            border: 1px solid #ddd;
-            box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
-            border-radius: 6px;
-            width: 200px;
-            display: none;
-            font-family: sans-serif;
-        }}
-        .menu-item {{
-            padding: 12px 16px;
-            cursor: pointer;
-            color: #333;
-            font-size: 14px;
-            border-bottom: 1px solid #f0f0f0;
-        }}
-        .menu-item:hover {{
-            background-color: #ff4b4b;
-            color: white;
-        }}
-    </style>
+# --- Solução Simplificada para Menu de Contexto ---
 
-    <div id="{box_id}" class="gantt-box">
-        <button id="{btn_id}" class="gantt-settings-btn" title="Opções">⚙️</button>
-        <h3 style="margin:0; color:#444; pointer-events:none;">📈 Gantt: {selected_empreendimento}</h3>
-        <p style="color:#888; font-size:14px; pointer-events:none;">Clique com <b>Botão Direito</b> ou na <b>Engrenagem</b></p>
+def create_simple_context_menu(selected_empreendimento):
+    """Cria um menu de contexto simples usando apenas HTML/JS básico"""
+    
+    html_code = f"""
+<div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
+    <div style="text-align: center;">
+        <h3>Área do Gráfico de Gantt</h3>
+        <p>Clique com o botão direito para abrir o menu de snapshot</p>
     </div>
+</div>
 
-    <script>
-    (function() {{
-        // 1. Proteção de Saída
-        if ({js_unsaved}) {{
-            window.onbeforeunload = (e) => {{ e.returnValue = 'Dados pendentes!'; return 'Dados pendentes!'; }};
-        }} else {{
-            window.onbeforeunload = null;
-        }}
+<style>
+.context-menu {{
+    position: fixed;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+    z-index: 1000;
+    display: none;
+}}
+.context-menu-item {{
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}}
+.context-menu-item:hover {{
+    background: #f0f0f0;
+}}
+.context-menu-item:last-child {{
+    border-bottom: none;
+}}
+</style>
 
-        // 2. Limpeza de menus antigos
-        const oldMenus = document.querySelectorAll('.custom-gantt-menu');
-        oldMenus.forEach(el => el.remove());
+<script>
+// Variável global para armazenar a ação
+let snapshotAction = null;
 
-        // 3. Criação do Menu
-        const menu = document.createElement('div');
-        menu.className = 'custom-gantt-menu';
-        menu.innerHTML = `
-            <div class="menu-item" id="menu-item-snap-{unique_id}">📸 Criar Snapshot</div>
-            <div class="menu-item" id="menu-item-view-{unique_id}">👁️ Ver Detalhes</div>
-        `;
-        document.body.appendChild(menu);
+// Cria o menu de contexto
+const menu = document.createElement('div');
+menu.className = 'context-menu';
+menu.innerHTML = `
+    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
+`;
+document.body.appendChild(menu);
 
-        // 4. Funções Lógicas
-        function abrirMenuGantt(e, isLeftClick = false) {{
-            if (!isLeftClick) e.preventDefault(); 
-            e.stopPropagation(); 
-            const x = e.pageX || (e.clientX + window.scrollX);
-            const y = e.pageY || (e.clientY + window.scrollY);
-            menu.style.display = 'block';
-            menu.style.left = (isLeftClick ? x - 180 : x) + 'px';
-            menu.style.top = y + 'px';
-        }}
+// Funções do menu
+function takeSnapshot() {{
+    snapshotAction = 'take_snapshot';
+    hideMenu();
+    // Usando uma abordagem simples: criar um link que atualiza a URL
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=take_snapshot&empreendimento={selected_empreendimento}`;
+    link.click();
+}}
 
-        function acaoGantt(acao) {{
-            menu.style.display = 'none';
-            const params = new URLSearchParams(window.location.search);
-            params.set('snapshot_action', acao);
-            params.set('empreendimento', "{selected_empreendimento}");
-            params.set('ts', Date.now());
-            window.location.search = params.toString();
-        }}
+function restoreSnapshot() {{
+    snapshotAction = 'restore_snapshot';
+    hideMenu();
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=restore_snapshot&empreendimento={selected_empreendimento}`;
+    link.click();
+}}
 
-        // 5. ADICIONANDO LISTENERS VIA JS (EVITA ERRO REACT)
-        
-        // Listener para o DIV (Botão Direito)
-        const box = document.getElementById('{box_id}');
-        if (box) {{
-            box.addEventListener('contextmenu', function(e) {{
-                abrirMenuGantt(e, false);
-            }});
-        }}
+function deleteSnapshot() {{
+    snapshotAction = 'delete_snapshot';
+    hideMenu();
+    const link = document.createElement('a');
+    link.href = `?snapshot_action=delete_snapshot&empreendimento={selected_empreendimento}`;
+    link.click();
+}}
 
-        // Listener para o BOTÃO (Clique Esquerdo)
-        const btn = document.getElementById('{btn_id}');
-        if (btn) {{
-            btn.addEventListener('click', function(e) {{
-                abrirMenuGantt(e, true);
-            }});
-        }}
+function showMenu(x, y) {{
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.display = 'block';
+}}
 
-        // Listeners para os itens do menu (necessário pois removemos onclick do HTML string)
-        document.getElementById('menu-item-snap-{unique_id}').addEventListener('click', function() {{
-            acaoGantt('take_snapshot');
-        }});
-        
-        document.getElementById('menu-item-view-{unique_id}').addEventListener('click', function() {{
-            acaoGantt('view_details');
-        }});
+function hideMenu() {{
+    menu.style.display = 'none';
+}}
 
-        // Fechar ao clicar fora
-        const closeHandler = (e) => {{
-            if (menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn) {{
-                menu.style.display = 'none';
-            }}
-        }};
-        
-        // Cleanup listener global para não acumular
-        if (window.globalGanttClose) document.removeEventListener('click', window.globalGanttClose);
-        window.globalGanttClose = closeHandler;
-        document.addEventListener('click', window.globalGanttClose);
+// Event listeners
+document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
+    e.preventDefault();
+    showMenu(e.pageX, e.pageY);
+}});
 
-    }})();
-    </script>
-    """
+document.addEventListener('click', function(e) {{
+    if (!menu.contains(e.target)) {{
+        hideMenu();
+    }}
+}});
+
+// Fecha o menu com ESC
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+        hideMenu();
+    }}
+}});
+</script>
+"""
+    return html_code
+
+# --- Função para processar ações do menu ---
+
+def process_snapshot_actions():
+    """Processa ações do menu de contexto via query parameters"""
+    query_params = st.query_params
     
-    return clean_html(raw_html)
+    action = query_params.get('snapshot_action')
+    empreendimento = query_params.get('empreendimento')
+    
+    if action and empreendimento:
+        # Limpa os parâmetros imediatamente
+        st.query_params.clear()
+        
+        df = create_mock_dataframe()
+        
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+        elif action == 'restore_snapshot':
+            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+        elif action == 'delete_snapshot':
+            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
 
-def process_url_actions():
-    try:
-        query = st.query_params
-        action = query.get('snapshot_action')
-        emp = query.get('empreendimento')
-        if action == 'take_snapshot' and emp:
-            v_name = buffer_new_snapshot(st.session_state.df, emp)
-            st.toast(f"Snapshot {v_name} criado!", icon="✅")
-            st.query_params.clear()
-            time.sleep(0.2)
-            st.rerun()
-    except: pass
+# --- Visualização de Comparação de Período ---
 
-# --- APP PRINCIPAL ---
+def display_period_comparison(df_filtered, empreendimento_snapshots):
+    st.subheader(f"⏳ Comparação de Período - {df_filtered['Empreendimento'].iloc[0]}")
+    
+    version_options = ["P0 (Planejamento Original)"]
+    version_options.extend(sorted(empreendimento_snapshots.keys()))
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        version_a = st.selectbox("Linha de Base A", version_options, index=0, key="version_a")
+    with col2:
+        default_index_b = 1 if len(version_options) > 1 else 0
+        version_b = st.selectbox("Linha de Base B", version_options, index=default_index_b, key="version_b")
+        
+    if version_a == version_b:
+        st.warning("Selecione duas linhas de base diferentes")
+        return
+
+    def load_version_data(version_name):
+        if version_name == "P0 (Planejamento Original)":
+            df_version = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim']].copy()
+            df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
+        else:
+            version_data_list = empreendimento_snapshots[version_name]['data']
+            df_version = pd.DataFrame(version_data_list)
+            version_prefix = version_name.split('-')[0]
+            col_inicio = f'{version_prefix}_Previsto_Inicio'
+            col_fim = f'{version_prefix}_Previsto_Fim'
+            df_version = df_version.rename(columns={col_inicio: 'Inicio', col_fim: 'Fim'})
+            
+        df_version['Inicio'] = pd.to_datetime(df_version['Inicio'])
+        df_version['Fim'] = pd.to_datetime(df_version['Fim'])
+        return df_version[['ID_Tarefa', 'Inicio', 'Fim']]
+
+    df_a = load_version_data(version_a)
+    df_b = load_version_data(version_b)
+    df_merged = df_a.merge(df_b, on='ID_Tarefa', suffixes=('_A', '_B'))
+    
+    df_merged['Duracao_A'] = (df_merged['Fim_A'] - df_merged['Inicio_A']).dt.days
+    df_merged['Duracao_B'] = (df_merged['Fim_B'] - df_merged['Inicio_B']).dt.days
+    df_merged['Diferenca_Duracao'] = df_merged['Duracao_B'] - df_merged['Duracao_A']
+    df_merged['Desvio_Inicio'] = (df_merged['Inicio_B'] - df_merged['Inicio_A']).dt.days
+    df_merged['Desvio_Fim'] = (df_merged['Fim_B'] - df_merged['Fim_A']).dt.days
+    
+    df_context = df_filtered[['ID_Tarefa', 'Tarefa']].drop_duplicates()
+    df_final = df_context.merge(df_merged, on='ID_Tarefa')
+    
+    st.dataframe(df_final, use_container_width=True)
+
+# --- Aplicação Principal ---
 
 def main():
-    st.title("📊 Sistema de Gantt Controlado")
+    st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
+    st.title("📊 Gráfico de Gantt com Versionamento")
     
-    if 'db_init' not in st.session_state:
-        create_snapshots_table()
-        st.session_state.db_init = True
-
-    process_url_actions()
+    # Inicialização
+    create_snapshots_table()
+    
+    # Processa ações do menu primeiro
+    process_snapshot_actions()
+    
+    # Dados
+    if 'df' not in st.session_state:
+        st.session_state.df = create_mock_dataframe()
     
     df = st.session_state.df
-    emps = df['Empreendimento'].unique()
-    selected_emp = st.sidebar.selectbox("Empreendimento", emps)
-    df_filtered = df[df['Empreendimento'] == selected_emp]
+    snapshots = load_snapshots()
     
-    pending_count = len(st.session_state.pending_snapshots)
-    if pending_count > 0:
-        st.sidebar.error(f"⚠️ {pending_count} Pendentes")
-        c1, c2 = st.sidebar.columns(2)
-        if c1.button("☁️ Salvar", type="primary"):
-            if save_pending_to_aws():
-                st.success("Salvo!"); time.sleep(0.5); st.rerun()
-        if c2.button("🗑️ Limpar"):
-            st.session_state.pending_snapshots = []; st.rerun()
-    else:
-        st.sidebar.success("✅ Sincronizado")
-        
-    col_main, col_hist = st.columns([3, 1])
+    # Sidebar
+    empreendimentos = df['Empreendimento'].unique().tolist()
+    selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
+    df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
     
-    with col_main:
-        # unsafe_allow_html=True renderiza o HTML limpo + Script que injeta os eventos
-        html_code = create_context_menu_stable(selected_emp, pending_count > 0)
-        st.markdown(html_code, unsafe_allow_html=True)
-        
+    # Botões de ação na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📸 Ações Rápidas")
+    
+    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True):
+        try:
+            version_name = take_snapshot(df, selected_empreendimento)
+            st.success(f"✅ {version_name} criado!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro: {e}")
+    
+    if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
+        st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
+        st.rerun()
+    
+    # Visualização principal
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("Dados do Projeto")
         st.dataframe(df_filtered, use_container_width=True)
-        
-    with col_hist:
-        st.write("**Histórico (Banco)**")
-        saved = load_snapshots_from_db().get(selected_emp, {})
-        if not saved: st.info("Vazio")
-        for k in sorted(saved.keys(), reverse=True):
-            c_a, c_b = st.columns([4, 1])
-            c_a.text(f"📅 {k}")
-            if c_b.button("X", key=f"del_{k}"):
-                delete_snapshot(selected_emp, k); st.rerun()
+    
+    with col2:
+        st.subheader("Snapshots")
+        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+        if empreendimento_snapshots:
+            for version in sorted(empreendimento_snapshots.keys()):
+                st.write(f"• {version}")
+        else:
+            st.info("Nenhum snapshot")
+    
+    # Menu de contexto
+    st.markdown("---")
+    st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    context_menu_html = create_simple_context_menu(selected_empreendimento)
+    html(context_menu_html, height=350)
+    
+    # Comparação de períodos
+    if st.session_state.get('show_comparison', False):
+        st.markdown("---")
+        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+        display_period_comparison(df_filtered, empreendimento_snapshots)
+    
+    # Gerenciamento de snapshots na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
+    
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    if empreendimento_snapshots:
+        for version_name in sorted(empreendimento_snapshots.keys()):
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                st.write(f"`{version_name}`")
+            with col2:
+                if st.button("🗑️", key=f"del_{version_name}"):
+                    if delete_snapshot(selected_empreendimento, version_name):
+                        st.success(f"✅ {version_name} deletado!")
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
+
+
