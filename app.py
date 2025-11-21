@@ -204,163 +204,142 @@ def take_snapshot(df, empreendimento):
     else:
         raise Exception("Falha ao salvar snapshot no banco de dados")
 
-# --- Menu de Contexto Atualizado ---
+# --- Menu de Contexto Corrigido ---
 
-def create_context_menu(selected_empreendimento):
-    """Cria um menu de contexto que não recarrega a página inteira"""
+def create_context_menu():
+    """Cria o menu de contexto com JavaScript corrigido"""
     
-    html_code = f"""
-<script>
-// Função para criar snapshot via AJAX
-function takeSnapshot() {{
-    // Cria um elemento temporário para acionar o callback do Streamlit
-    const tempInput = document.createElement('input');
-    tempInput.type = 'hidden';
-    tempInput.name = 'take_snapshot';
-    tempInput.value = '{selected_empreendimento}';
-    document.body.appendChild(tempInput);
-    
-    // Dispara um evento que o Streamlit pode detectar
-    const event = new Event('snapshotAction');
-    document.dispatchEvent(event);
-    
-    hideMenu();
-}}
-
-// Função para restaurar snapshot
-function restoreSnapshot() {{
-    const tempInput = document.createElement('input');
-    tempInput.type = 'hidden';
-    tempInput.name = 'restore_snapshot';
-    tempInput.value = '{selected_empreendimento}';
-    document.body.appendChild(tempInput);
-    
-    const event = new Event('snapshotAction');
-    document.dispatchEvent(event);
-    hideMenu();
-}}
-
-// Função para deletar snapshot
-function deleteSnapshot() {{
-    const tempInput = document.createElement('input');
-    tempInput.type = 'hidden';
-    tempInput.name = 'delete_snapshot';
-    tempInput.value = '{selected_empreendimento}';
-    document.body.appendChild(tempInput);
-    
-    const event = new Event('snapshotAction');
-    document.dispatchEvent(event);
-    hideMenu();
-}}
-
-// Cria o menu de contexto
-const menu = document.createElement('div');
-menu.className = 'context-menu';
-menu.id = 'context-menu';
-menu.innerHTML = `
-    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
-    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
-    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
-`;
-document.body.appendChild(menu);
-
-function showMenu(x, y) {{
-    const menu = document.getElementById('context-menu');
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-    menu.style.display = 'block';
-}}
-
-function hideMenu() {{
-    const menu = document.getElementById('context-menu');
-    menu.style.display = 'none';
-}}
-
-// Event listeners
-document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
-    e.preventDefault();
-    showMenu(e.pageX, e.pageY);
-}});
-
-document.addEventListener('click', function(e) {{
-    const menu = document.getElementById('context-menu');
-    if (menu && !menu.contains(e.target)) {{
-        hideMenu();
-    }}
-}});
-
-// Fecha o menu com ESC
-document.addEventListener('keydown', function(e) {{
-    if (e.key === 'Escape') {{
-        hideMenu();
-    }}
-}});
-
-// Previne o recarregamento da página quando o formulário é submetido
-document.addEventListener('DOMContentLoaded', function() {{
-    const forms = document.querySelectorAll('form');
-    forms.forEach(form => {{
-        form.addEventListener('submit', function(e) {{
-            e.preventDefault();
-            return false;
-        }});
-    }});
-}});
-</script>
-
+    menu_html = """
 <style>
-.context-menu {{
+.context-menu {
     position: fixed;
     background: white;
     border: 1px solid #ccc;
     border-radius: 5px;
     box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
-    z-index: 1000;
+    z-index: 10000;
     display: none;
-}}
-.context-menu-item {{
-    padding: 10px 15px;
+    font-family: Arial, sans-serif;
+}
+.context-menu-item {
+    padding: 12px 20px;
     cursor: pointer;
     border-bottom: 1px solid #eee;
-}}
-.context-menu-item:hover {{
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+.context-menu-item:hover {
     background: #f0f0f0;
-}}
-.context-menu-item:last-child {{
+}
+.context-menu-item:last-child {
     border-bottom: none;
-}}
+}
 </style>
+
+<div id="context-menu" class="context-menu">
+    <div class="context-menu-item" onclick="handleContextMenuAction('take_snapshot')">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="handleContextMenuAction('restore_snapshot')">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="handleContextMenuAction('delete_snapshot')">🗑️ Deletar Snapshot</div>
+</div>
+
+<script>
+// Função para mostrar o menu de contexto
+function showContextMenu(x, y) {
+    const menu = document.getElementById('context-menu');
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.display = 'block';
+}
+
+// Função para esconder o menu de contexto
+function hideContextMenu() {
+    const menu = document.getElementById('context-menu');
+    menu.style.display = 'none';
+}
+
+// Função para lidar com ações do menu
+function handleContextMenuAction(action) {
+    // Cria um elemento hidden para armazenar a ação
+    let hiddenInput = document.getElementById('context-menu-action');
+    if (!hiddenInput) {
+        hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.id = 'context-menu-action';
+        document.body.appendChild(hiddenInput);
+    }
+    hiddenInput.value = action;
+    
+    // Dispara um evento customizado
+    const event = new Event('contextMenuAction');
+    document.dispatchEvent(event);
+    
+    hideContextMenu();
+}
+
+// Adiciona event listener à área do Gantt
+document.addEventListener('DOMContentLoaded', function() {
+    const ganttArea = document.getElementById('gantt-area');
+    
+    if (ganttArea) {
+        ganttArea.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            showContextMenu(e.clientX, e.clientY);
+        });
+    }
+    
+    // Fecha o menu ao clicar em qualquer lugar
+    document.addEventListener('click', function(e) {
+        const menu = document.getElementById('context-menu');
+        if (menu && !menu.contains(e.target)) {
+            hideContextMenu();
+        }
+    });
+    
+    // Fecha o menu com ESC
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            hideContextMenu();
+        }
+    });
+});
+
+// Previne o menu de contexto padrão na área do Gantt
+document.addEventListener('contextmenu', function(e) {
+    if (e.target.id === 'gantt-area' || e.target.closest('#gantt-area')) {
+        e.preventDefault();
+    }
+}, true);
+</script>
 """
-    return html_code
+    return menu_html
 
 # --- Função para processar ações do menu ---
 
 def process_context_menu_actions():
-    """Processa ações do menu de contexto sem recarregar a página inteira"""
-    
-    # Verifica se há ações pendentes no session_state
-    if 'pending_snapshot_action' in st.session_state:
-        action = st.session_state.pending_snapshot_action
-        empreendimento = st.session_state.pending_snapshot_empreendimento
-        
-        # Limpa a ação pendente
-        del st.session_state.pending_snapshot_action
-        del st.session_state.pending_snapshot_empreendimento
-        
-        df = st.session_state.df
-        
-        if action == 'take_snapshot':
-            try:
-                version_name = take_snapshot(df, empreendimento)
-                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
-                # Atualiza apenas os snapshots na sidebar
-                st.session_state.snapshots_updated = True
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot: {e}")
-        elif action == 'restore_snapshot':
-            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
-        elif action == 'delete_snapshot':
-            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+    """Processa ações do menu de contexto"""
+    # Usando um container vazio para forçar a atualização apenas desta área
+    with st.container():
+        if st.session_state.get('context_menu_action'):
+            action = st.session_state.context_menu_action
+            selected_empreendimento = st.session_state.get('selected_empreendimento', '')
+            
+            if action == 'take_snapshot' and selected_empreendimento:
+                try:
+                    version_name = take_snapshot(st.session_state.df, selected_empreendimento)
+                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                    # Limpa a ação após processar
+                    st.session_state.context_menu_action = None
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao criar snapshot: {e}")
+                    st.session_state.context_menu_action = None
+            elif action == 'restore_snapshot':
+                st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+                st.session_state.context_menu_action = None
+            elif action == 'delete_snapshot':
+                st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+                st.session_state.context_menu_action = None
 
 # --- Visualização de Comparação de Período ---
 
@@ -414,10 +393,15 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
 
 # --- Função para enviar dados para AWS ---
 
-def send_to_aws():
+def send_to_aws(empreendimento, version_name):
     """Simula o envio de dados para AWS"""
-    st.session_state.unsaved_changes = False
-    return True
+    try:
+        # Simular processamento
+        st.session_state.unsaved_changes = False
+        return True
+    except Exception as e:
+        st.error(f"Erro ao enviar para AWS: {e}")
+        return False
 
 # --- Aplicação Principal ---
 
@@ -432,6 +416,8 @@ def main():
         st.session_state.unsaved_changes = False
     if 'show_comparison' not in st.session_state:
         st.session_state.show_comparison = False
+    if 'context_menu_action' not in st.session_state:
+        st.session_state.context_menu_action = None
     
     # Inicialização do banco
     create_snapshots_table()
@@ -443,6 +429,10 @@ def main():
     # Sidebar
     empreendimentos = df['Empreendimento'].unique().tolist()
     selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
+    
+    # Salva o empreendimento selecionado no session_state para o menu de contexto
+    st.session_state.selected_empreendimento = selected_empreendimento
+    
     df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
     
     # Botões de ação na sidebar
@@ -454,11 +444,13 @@ def main():
             version_name = take_snapshot(df, selected_empreendimento)
             st.success(f"✅ {version_name} criado!")
             snapshots = load_snapshots()  # Atualiza os snapshots
+            st.rerun()
         except Exception as e:
             st.error(f"❌ Erro: {e}")
     
     if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
         st.session_state.show_comparison = not st.session_state.show_comparison
+        st.rerun()
     
     # Seção de envio para AWS
     st.sidebar.markdown("---")
@@ -472,8 +464,9 @@ def main():
                 st.write(f"`{version_name}`")
             with col2:
                 if st.button("☁️", key=f"aws_{version_name}"):
-                    if send_to_aws():
+                    if send_to_aws(selected_empreendimento, version_name):
                         st.sidebar.success(f"✅ {version_name} enviado para AWS!")
+                        st.rerun()
     
     # Gerenciamento de snapshots na sidebar
     st.sidebar.markdown("---")
@@ -489,6 +482,7 @@ def main():
                     if delete_snapshot(selected_empreendimento, version_name):
                         st.sidebar.success(f"✅ {version_name} deletado!")
                         snapshots = load_snapshots()  # Atualiza os snapshots
+                        st.rerun()
     
     # Visualização principal
     col1, col2 = st.columns([2, 1])
@@ -520,8 +514,27 @@ def main():
     """, unsafe_allow_html=True)
     
     # Inclui o menu de contexto
-    context_menu_html = create_context_menu(selected_empreendimento)
+    context_menu_html = create_context_menu()
     html(context_menu_html, height=0)
+    
+    # JavaScript para detectar ações do menu de contexto
+    js_code = """
+    <script>
+    document.addEventListener('contextMenuAction', function() {
+        const hiddenInput = document.getElementById('context-menu-action');
+        if (hiddenInput && hiddenInput.value) {
+            // Usando window.parent para acessar o Streamlit
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'streamlit:setComponentValue',
+                    value: hiddenInput.value
+                }, '*');
+            }
+        }
+    });
+    </script>
+    """
+    html(js_code, height=0)
     
     # Processa ações do menu de contexto
     process_context_menu_actions()
@@ -541,21 +554,35 @@ def main():
         });
         </script>
         """
-        st.components.v1.html(unsaved_changes_js)
+        st.components.v1.html(unsaved_changes_js, height=0)
         st.warning("⚠️ Você tem alterações não salvas. Certifique-se de enviar os dados para AWS antes de sair.")
 
-# Callback para ações do menu de contexto
-def handle_snapshot_action():
-    """Callback para processar ações do menu de contexto"""
-    if 'take_snapshot' in st.session_state:
-        st.session_state.pending_snapshot_action = 'take_snapshot'
-        st.session_state.pending_snapshot_empreendimento = st.session_state.take_snapshot
-        del st.session_state.take_snapshot
+# Componente para capturar ações do menu
+def context_menu_handler():
+    """Handler para ações do menu de contexto via Streamlit components"""
+    # Criar um componente customizado para capturar as ações
+    component_html = """
+    <div id="context-menu-handler"></div>
+    <script>
+    window.addEventListener('message', function(event) {
+        if (event.data.type === 'streamlit:setComponentValue') {
+            // Envia a ação de volta para o Streamlit
+            window.parent.postMessage({
+                type: 'streamlit:componentValue',
+                value: event.data.value
+            }, '*');
+        }
+    });
+    </script>
+    """
+    return html(component_html, height=0)
 
-# Registra o callback
 if __name__ == "__main__":
-    # Verifica se há ações de snapshot pendentes
-    if 'take_snapshot' in st.session_state:
-        handle_snapshot_action()
+    # Handler para componentes (simplificado)
+    context_menu_handler()
+    
+    # Verifica se há uma ação do menu de contexto
+    if 'context_menu_action' not in st.session_state:
+        st.session_state.context_menu_action = None
     
     main()
