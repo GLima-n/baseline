@@ -5,6 +5,7 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 import time
+import textwrap # IMPORTANTE: Usado para corrigir o bug de exibição do HTML
 
 # --- Configuração da Página (Deve ser a primeira linha) ---
 st.set_page_config(layout="wide", page_title="Gantt Chart Baseline", initial_sidebar_state="expanded")
@@ -19,7 +20,7 @@ try:
         'port': 3306
     }
 except Exception:
-    DB_CONFIG = None # Modo Offline
+    DB_CONFIG = None # Define como None se falhar (Modo Offline)
 
 # --- Inicialização do Session State ---
 if 'pending_snapshots' not in st.session_state:
@@ -177,15 +178,16 @@ def buffer_new_snapshot(df, empreendimento):
     })
     return version_name
 
-# --- MENU DE CONTEXTO FINAL (ESTÁVEL) ---
+# --- MENU DE CONTEXTO FINAL (CORRIGIDO) ---
 
 def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
     """
-    Cria um menu estável com nomes de função fixos e botão de backup visual.
+    Cria um menu estável. 
+    Usa textwrap.dedent para GARANTIR que o HTML seja renderizado e não exibido como texto.
     """
     js_unsaved = "true" if has_unsaved_changes else "false"
 
-    html_code = f"""
+    html_code = textwrap.dedent(f"""
     <style>
         /* Área do Gantt */
         .gantt-box {{
@@ -218,13 +220,14 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             background: none;
             border: none;
             padding: 5px;
+            z-index: 10;
         }}
         .gantt-settings-btn:hover {{
             opacity: 1;
             transform: scale(1.1);
         }}
 
-        /* Menu Flutuante (Classe Fixa para facilitar remoção) */
+        /* Menu Flutuante */
         .custom-gantt-menu {{
             position: fixed;
             z-index: 9999999;
@@ -253,7 +256,7 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
 
     <div class="gantt-box" oncontextmenu="window.abrirMenuGantt(event)">
         
-        <button class="gantt-settings-btn" onclick="window.abrirMenuGantt(event, true)" title="Abrir Menu de Snapshot">
+        <button class="gantt-settings-btn" onclick="window.abrirMenuGantt(event, true)" title="Abrir Opções">
             ⚙️
         </button>
         
@@ -270,59 +273,57 @@ def create_context_menu_stable(selected_empreendimento, has_unsaved_changes):
             window.onbeforeunload = null;
         }}
 
-        // 2. Limpa menus antigos (Usa Classe, não ID aleatório)
-        document.querySelectorAll('.custom-gantt-menu').forEach(el => el.remove());
+        // 2. Limpeza de menus antigos
+        const oldMenus = document.querySelectorAll('.custom-gantt-menu');
+        oldMenus.forEach(el => el.remove());
 
-        // 3. Cria o Menu Novo
+        // 3. Criação do Menu
         const menu = document.createElement('div');
-        menu.className = 'custom-gantt-menu'; // Classe fixa
+        menu.className = 'custom-gantt-menu';
         menu.innerHTML = `
             <div class="menu-item" onclick="window.acaoGantt('take_snapshot')">📸 Criar Snapshot</div>
             <div class="menu-item" onclick="window.acaoGantt('view_details')">👁️ Ver Detalhes</div>
         `;
         document.body.appendChild(menu);
 
-        // 4. Função GLOBAL e ESTÁVEL para abrir o menu
-        // Sobrescreve a função anterior a cada renderização para atualizar as variáveis
+        // 4. Função Abrir Menu
         window.abrirMenuGantt = function(e, isLeftClick = false) {{
-            if (!isLeftClick) e.preventDefault(); // Bloqueia menu nativo se for clique direito
-            e.stopPropagation(); // Impede propagação para o Streamlit
+            if (!isLeftClick) e.preventDefault(); 
+            e.stopPropagation(); 
 
-            // Pega posição do mouse
-            // Se foi no botão de engrenagem (isLeftClick), ajusta um pouco
             const x = e.pageX || (e.clientX + window.scrollX);
             const y = e.pageY || (e.clientY + window.scrollY);
 
             menu.style.display = 'block';
-            menu.style.left = (isLeftClick ? x - 180 : x) + 'px'; // Se botão, joga pra esquerda
+            menu.style.left = (isLeftClick ? x - 180 : x) + 'px';
             menu.style.top = y + 'px';
         }};
 
-        // 5. Função GLOBAL e ESTÁVEL para enviar ação
+        // 5. Função Enviar Ação
         window.acaoGantt = function(acao) {{
             menu.style.display = 'none';
             const params = new URLSearchParams(window.location.search);
             params.set('snapshot_action', acao);
             params.set('empreendimento', "{selected_empreendimento}");
-            params.set('ts', Date.now()); // Força reload
+            params.set('ts', Date.now());
             window.location.search = params.toString();
         }};
 
-        // 6. Fecha ao clicar fora
+        // 6. Fechar ao clicar fora
         const closeHandler = (e) => {{
-            if (menu && menu.style.display === 'block' && !menu.contains(e.target)) {{
+            if (menu.style.display === 'block' && !menu.contains(e.target)) {{
                 menu.style.display = 'none';
             }}
         }};
         
-        // Remove listener antigo se houver (para evitar acumulo)
         if (window.globalGanttClose) document.removeEventListener('click', window.globalGanttClose);
         window.globalGanttClose = closeHandler;
         document.addEventListener('click', window.globalGanttClose);
 
     }})();
     </script>
-    """
+    """)
+    
     return html_code
 
 def process_url_actions():
@@ -344,12 +345,12 @@ def process_url_actions():
 def main():
     st.title("📊 Sistema de Gantt Controlado")
     
-    # Inicializa DB na primeira vez
+    # Inicializa DB
     if 'db_init' not in st.session_state:
         create_snapshots_table()
         st.session_state.db_init = True
 
-    # Processa comandos da URL
+    # Processa URL
     process_url_actions()
     
     # Sidebar e Dados
@@ -358,7 +359,7 @@ def main():
     selected_emp = st.sidebar.selectbox("Empreendimento", emps)
     df_filtered = df[df['Empreendimento'] == selected_emp]
     
-    # Lógica de Pendentes
+    # Lógica de Pendentes (Sidebar)
     pending_count = len(st.session_state.pending_snapshots)
     if pending_count > 0:
         st.sidebar.error(f"⚠️ {pending_count} Pendentes")
@@ -371,12 +372,13 @@ def main():
     else:
         st.sidebar.success("✅ Sincronizado")
         
-    # Layout
+    # Layout Principal
     col_main, col_hist = st.columns([3, 1])
     
     with col_main:
         # INJEÇÃO DO HTML/JS
         html_code = create_context_menu_stable(selected_emp, pending_count > 0)
+        # unsafe_allow_html=True é OBRIGATÓRIO
         st.markdown(html_code, unsafe_allow_html=True)
         
         st.dataframe(df_filtered, use_container_width=True)
