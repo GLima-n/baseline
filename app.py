@@ -261,14 +261,13 @@ def process_context_menu_actions():
                 st.session_state.context_menu_error = f"❌ Erro ao criar snapshot: {e}"
                 st.session_state.show_context_error = True
 
-# --- Menu de Contexto SEM RECARREGAMENTO VISÍVEL ---
+# --- Menu de Contexto Atualizado ---
 
-def create_context_menu_component(selected_empreendimento):
-    """Cria o componente do menu de contexto sem recarregamento visível"""
+def create_context_menu_component(selected_empreendimento, snapshots, unsent_snapshots):
+    """Cria o componente do menu de contexto atualizado"""
     
     # Mostrar mensagens de sucesso/erro do menu de contexto
     if st.session_state.get('show_context_success'):
-        # Usar um container vazio para a mensagem (não recarrega a página inteira)
         success_container = st.empty()
         success_container.success(st.session_state.context_menu_success)
         st.session_state.show_context_success = False
@@ -299,6 +298,7 @@ def create_context_menu_component(selected_empreendimento):
         z-index: 10000;
         display: none;
         font-family: Arial, sans-serif;
+        min-width: 250px;
     }}
     .context-menu-item {{
         padding: 12px 20px;
@@ -313,6 +313,16 @@ def create_context_menu_component(selected_empreendimento):
     .context-menu-item:last-child {{
         border-bottom: none;
     }}
+    .context-menu-section {{
+        background: #f8f9fa;
+        font-weight: bold;
+        color: #495057;
+    }}
+    .context-menu-subitem {{
+        padding: 8px 20px 8px 30px;
+        font-size: 13px;
+        color: #6c757d;
+    }}
     #gantt-area {{
         height: 300px;
         border: 2px dashed #ccc;
@@ -323,6 +333,7 @@ def create_context_menu_component(selected_empreendimento):
         cursor: pointer;
         margin: 20px 0;
         user-select: none;
+        border-radius: 8px;
     }}
     #snapshot-status {{
         margin-top: 10px;
@@ -380,7 +391,7 @@ def create_context_menu_component(selected_empreendimento):
     <div id="gantt-area">
         <div style="text-align: center;">
             <h3>Área do Gráfico de Gantt</h3>
-            <p>Clique com o botão direito para abrir o menu de snapshot</p>
+            <p>Clique com o botão direito para abrir o menu de contexto</p>
         </div>
     </div>
 
@@ -398,6 +409,12 @@ def create_context_menu_component(selected_empreendimento):
     <iframe id="hidden-iframe" name="hidden-iframe"></iframe>
 
     <div id="context-menu">
+        <div class="context-menu-item context-menu-section">📸 Snapshots para Enviar</div>
+        {"".join([f'<div class="context-menu-subitem">{snapshot}</div>' for snapshot in unsent_snapshots]) if unsent_snapshots else '<div class="context-menu-subitem">Nenhum snapshot aguardando envio</div>'}
+        
+        <div class="context-menu-item context-menu-section">💾 Todos os Snapshots</div>
+        {"".join([f'<div class="context-menu-subitem">{snapshot}</div>' for snapshot in sorted(snapshots.keys())]) if snapshots else '<div class="context-menu-subitem">Nenhum snapshot</div>'}
+        
         <div class="context-menu-item" id="take-snapshot">📸 Tirar Snapshot</div>
         <div class="context-menu-item" id="restore-snapshot">🔄 Restaurar Snapshot</div>
         <div class="context-menu-item" id="delete-snapshot">🗑️ Deletar Snapshot</div>
@@ -463,11 +480,9 @@ def create_context_menu_component(selected_empreendimento):
             hideLoading();
             showStatus('✅ Snapshot criado! Verifique a barra lateral para enviar para AWS.', 'status-success');
             
-            // Forçar uma atualização suave da sidebar após 1 segundo
+            // Forçar uma atualização suave após 1 segundo
             setTimeout(() => {{
-                // Disparar um evento customizado para atualizar a interface
-                const event = new Event('snapshotCreated');
-                document.dispatchEvent(event);
+                window.location.reload();
             }}, 1000);
         }};
         
@@ -528,12 +543,6 @@ def create_context_menu_component(selected_empreendimento):
             e.preventDefault();
         }}
     }}, true);
-    
-    // Atualizar interface quando snapshot for criado
-    document.addEventListener('snapshotCreated', function() {{
-        console.log('Snapshot criado - interface pode ser atualizada');
-        // Aqui você pode adicionar lógica para atualizar elementos específicos
-    }});
     </script>
     """
     
@@ -622,8 +631,9 @@ def main():
     
     # Sidebar
     with st.sidebar:
+        st.markdown("### 🏢 Empreendimento")
         empreendimentos = df['Empreendimento'].unique().tolist()
-        selected_empreendimento = st.selectbox("🏢 Empreendimento", empreendimentos)
+        selected_empreendimento = st.selectbox("Selecione o empreendimento", empreendimentos, label_visibility="collapsed")
         
         df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
         
@@ -631,17 +641,19 @@ def main():
         st.markdown("---")
         st.markdown("### 📸 Ações Rápidas")
         
-        if st.button("📸 Criar Snapshot", use_container_width=True, key="sidebar_snapshot"):
-            try:
-                version_name = take_snapshot(df, selected_empreendimento)
-                st.success(f"✅ {version_name} criado!")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📸 Criar Snapshot", use_container_width=True, key="sidebar_snapshot"):
+                try:
+                    version_name = take_snapshot(df, selected_empreendimento)
+                    st.success(f"✅ {version_name} criado!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro: {e}")
+        with col2:
+            if st.button("⏳ Comparar Períodos", use_container_width=True, key="sidebar_compare"):
+                st.session_state.show_comparison = not st.session_state.show_comparison
                 st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro: {e}")
-        
-        if st.button("⏳ Comparar Períodos", use_container_width=True, key="sidebar_compare"):
-            st.session_state.show_comparison = not st.session_state.show_comparison
-            st.rerun()
         
         # Seção de envio para AWS
         st.markdown("---")
@@ -698,33 +710,33 @@ def main():
         else:
             st.info("Nenhum snapshot criado")
     
-    # Visualização principal
-    col1, col2 = st.columns([2, 1])
+    # Visualização principal - DADOS DO PROJETO
+    st.subheader("📋 DADOS DO PROJETO")
     
-    with col1:
-        st.subheader("Dados do Projeto")
-        st.dataframe(df_filtered, use_container_width=True)
+    # Preparar dados para exibição (corrigindo cabeçalhos)
+    display_df = df_filtered[['ID_Tarefa', 'Empreendimento', 'Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
+    display_df['Real_Inicio'] = display_df['Real_Inicio'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    display_df['Real_Fim'] = display_df['Real_Fim'].dt.strftime('%Y-%m-%d')
     
-    with col2:
-        st.subheader("Snapshots")
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        unsent_snapshots = st.session_state.unsent_snapshots.get(selected_empreendimento, [])
-        
-        if empreendimento_snapshots:
-            for version in sorted(empreendimento_snapshots.keys()):
-                if version in unsent_snapshots:
-                    st.write(f"• {version} ⏳")
-                else:
-                    st.write(f"• {version} ✅")
-        else:
-            st.info("Nenhum snapshot")
+    # Renomear colunas para corresponder à imagem
+    display_df = display_df.rename(columns={
+        'ID_Tarefa': 'ID_Tarefa',
+        'Empreendimento': 'Empreendimento', 
+        'Tarefa': 'Tarefa',
+        'Real_Inicio': 'Real_Inicio',
+        'Real_Fim': 'Real_Fim'
+    })
+    
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
     
     # Menu de contexto
     st.markdown("---")
-    st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    st.subheader("🎯 Menu de Contexto (Clique com Botão Direito)")
     
-    # Criar o componente do menu de contexto
-    create_context_menu_component(selected_empreendimento)
+    # Criar o componente do menu de contexto atualizado
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    unsent_snapshots = st.session_state.unsent_snapshots.get(selected_empreendimento, [])
+    create_context_menu_component(selected_empreendimento, empreendimento_snapshots, unsent_snapshots)
     
     # Comparação de períodos
     if st.session_state.show_comparison:
