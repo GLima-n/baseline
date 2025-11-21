@@ -16,32 +16,40 @@ try:
         'database': st.secrets["aws_db"]["database"],
         'port': 3306
     }
-except Exception:
+    st.success("✅ Configurações AWS carregadas com sucesso!")
+except Exception as e:
+    st.error(f"❌ Erro ao carregar configurações AWS: {e}")
     DB_CONFIG = {
         'host': "mock_host",
-        'user': "mock_user",
+        'user': "mock_user", 
         'password': "mock_password",
         'database': "mock_db",
         'port': 3306
     }
+    st.info("🔶 Modo offline ativado - usando armazenamento local")
 
 # --- Funções de Banco de Dados ---
 
-@st.cache_resource
+@st.cache_resource(ttl=3600)  # Cache de 1 hora para a conexão
 def get_db_connection():
     """Tenta estabelecer e cachear a conexão com o banco de dados."""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         if conn.is_connected():
+            st.success("✅ Conexão com AWS estabelecida!")
             return conn
         else:
+            st.error("❌ Falha na conexão com AWS")
             return None
     except Error as e:
+        st.error(f"❌ Erro de conexão com AWS: {e}")
         return None
     except Exception as e:
+        st.error(f"❌ Erro inesperado: {e}")
         return None
 
 def create_snapshots_table():
+    """Cria a tabela de snapshots se não existir."""
     conn = get_db_connection()
     if conn:
         try:
@@ -59,20 +67,21 @@ def create_snapshots_table():
             """
             cursor.execute(create_table_query)
             conn.commit()
+            st.success("✅ Tabela de snapshots verificada/criada!")
         except Error as e:
-            if conn:
-                st.error(f"Erro ao criar tabela: {e}")
+            st.error(f"❌ Erro ao criar tabela: {e}")
         finally:
-            if conn and conn.is_connected():
+            if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
+        # Modo offline - usar session_state
         if 'mock_snapshots' not in st.session_state:
             st.session_state.mock_snapshots = {}
+        st.info("🔶 Modo offline - usando armazenamento local")
 
-@st.cache_data(ttl=3600)
 def load_snapshots():
-    """Carrega todos os snapshots do banco de dados ou mock."""
+    """Carrega snapshots do banco ou do armazenamento local."""
     conn = get_db_connection()
     if conn:
         snapshots = {}
@@ -81,189 +90,309 @@ def load_snapshots():
             query = "SELECT empreendimento, version_name, snapshot_data, created_date FROM snapshots ORDER BY created_at DESC"
             cursor.execute(query)
             results = cursor.fetchall()
+            
             for row in results:
                 empreendimento = row['empreendimento']
                 version_name = row['version_name']
                 if empreendimento not in snapshots:
                     snapshots[empreendimento] = {}
-                snapshot_data = json.loads(row['snapshot_data'])
-                snapshots[empreendimento][version_name] = {
-                    "date": row['created_date'],
-                    "data": snapshot_data
-                }
+                
+                try:
+                    snapshot_data = json.loads(row['snapshot_data'])
+                    snapshots[empreendimento][version_name] = {
+                        "date": row['created_date'],
+                        "data": snapshot_data
+                    }
+                except json.JSONDecodeError:
+                    st.error(f"❌ Erro ao decodificar JSON do snapshot {version_name}")
+                    continue
+                    
+            st.success(f"✅ {len(results)} snapshots carregados da AWS")
             return snapshots
+            
         except Error as e:
-            if conn:
-                st.error(f"Erro ao carregar snapshots: {e}")
+            st.error(f"❌ Erro ao carregar snapshots: {e}")
             return {}
         finally:
-            if conn and conn.is_connected():
+            if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
+        # Modo offline
+        st.info("🔶 Carregando snapshots do armazenamento local")
         return st.session_state.get('mock_snapshots', {})
 
-def validate_snapshot_data(snapshot_data):
-    """Valida a estrutura dos dados do snapshot."""
-    required_fields = ['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim']
-    
-    if not isinstance(snapshot_data, list):
-        return False
-    
-    for item in snapshot_data:
-        if not all(field in item for field in required_fields):
-            return False
-    
-    return True
-
 def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
-    """Salva um snapshot no banco de dados ou mock."""
-    if not validate_snapshot_data(snapshot_data):
-        st.error("Dados do snapshot inválidos")
-        return False
-        
+    """Salva snapshot no banco ou localmente."""
     conn = get_db_connection()
+    
     if conn:
         try:
             cursor = conn.cursor()
-            snapshot_json = json.dumps(snapshot_data)
+            snapshot_json = json.dumps(snapshot_data, ensure_ascii=False)
+            
             insert_query = """
             INSERT INTO snapshots (empreendimento, version_name, snapshot_data, created_date)
             VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE snapshot_data = VALUES(snapshot_data), created_date = VALUES(created_date)
+            ON DUPLICATE KEY UPDATE 
+                snapshot_data = VALUES(snapshot_data), 
+                created_date = VALUES(created_date)
             """
+            
             cursor.execute(insert_query, (empreendimento, version_name, snapshot_json, created_date))
             conn.commit()
-            load_snapshots.clear()
-            return True
+            
+            if cursor.rowcount > 0:
+                st.success(f"✅ Snapshot '{version_name}' salvo na AWS!")
+                return True
+            else:
+                st.warning("⚠️ Nenhuma linha afetada - snapshot pode já existir")
+                return False
+                
         except Error as e:
-            st.error(f"Erro ao salvar snapshot: {e}")
+            st.error(f"❌ Erro ao salvar snapshot na AWS: {e}")
             return False
         finally:
-            if conn and conn.is_connected():
+            if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
+        # Modo offline - salvar localmente
         if 'mock_snapshots' not in st.session_state:
             st.session_state.mock_snapshots = {}
+        
         if empreendimento not in st.session_state.mock_snapshots:
             st.session_state.mock_snapshots[empreendimento] = {}
+            
         st.session_state.mock_snapshots[empreendimento][version_name] = {
             "date": created_date,
             "data": snapshot_data
         }
+        
+        st.success(f"✅ Snapshot '{version_name}' salvo localmente (modo offline)")
         return True
 
 def delete_snapshot(empreendimento, version_name):
-    """Deleta um snapshot do banco de dados ou mock."""
+    """Deleta snapshot do banco ou localmente."""
     conn = get_db_connection()
+    
     if conn:
         try:
             cursor = conn.cursor()
             delete_query = "DELETE FROM snapshots WHERE empreendimento = %s AND version_name = %s"
             cursor.execute(delete_query, (empreendimento, version_name))
             conn.commit()
-            load_snapshots.clear()
-            return cursor.rowcount > 0
+            
+            if cursor.rowcount > 0:
+                st.success(f"✅ Snapshot '{version_name}' deletado da AWS!")
+                return True
+            else:
+                st.warning(f"⚠️ Snapshot '{version_name}' não encontrado na AWS")
+                return False
+                
         except Error as e:
-            st.error(f"Erro ao deletar snapshot: {e}")
+            st.error(f"❌ Erro ao deletar snapshot da AWS: {e}")
             return False
         finally:
-            if conn and conn.is_connected():
+            if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
-        if empreendimento in st.session_state.get('mock_snapshots', {}) and version_name in st.session_state.mock_snapshots[empreendimento]:
-            del st.session_state.mock_snapshots[empreendimento][version_name]
-            return True
-        return False
-
-# --- Funções para Gerenciar Dados Locais ---
-
-def take_snapshot(df, empreendimento, save_locally=True):
-    """Cria um snapshot dos dados filtrados e salva localmente ou na AWS."""
-    df_filtered = df[df['Empreendimento'] == empreendimento].copy()
-    
-    snapshot_data = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim']].to_dict('records')
-    
-    now = datetime.now()
-    version_name = f"V{now.strftime('%Y%m%d%H%M%S')}"
-    created_date = now.strftime("%d/%m/%Y")
-    
-    if save_locally:
-        if 'local_data' not in st.session_state:
-            st.session_state.local_data = {}
-        
-        st.session_state.local_data[version_name] = {
-            'empreendimento': empreendimento,
-            'version_name': version_name,
-            'snapshot_data': snapshot_data,
-            'created_date': created_date,
-            'saved_to_aws': False
-        }
-        st.session_state.unsaved_changes = True
-        return version_name, True
-    else:
-        success = save_snapshot(empreendimento, version_name, snapshot_data, created_date)
-        return version_name, success
-
-def save_local_to_aws():
-    """Salva todos os snapshots locais não salvos na AWS."""
-    saved_count = 0
-    error_count = 0
-    
-    if 'local_data' not in st.session_state:
-        return 0, 0
-        
-    keys_to_update = []
-    
-    for version_name, data in st.session_state.local_data.items():
-        if not data.get('saved_to_aws'):
-            success = save_snapshot(
-                data['empreendimento'],
-                data['version_name'],
-                data['snapshot_data'],
-                data['created_date']
-            )
+        # Modo offline - deletar localmente
+        if (empreendimento in st.session_state.get('mock_snapshots', {}) and 
+            version_name in st.session_state.mock_snapshots[empreendimento]):
             
-            if success:
-                keys_to_update.append(version_name)
-                saved_count += 1
-            else:
-                error_count += 1
-                
-    for version_name in keys_to_update:
-        st.session_state.local_data[version_name]['saved_to_aws'] = True
-        
-    st.session_state.unsaved_changes = any(not data.get('saved_to_aws') for data in st.session_state.local_data.values())
-    
-    return saved_count, error_count
-
-def clear_local_data():
-    """Limpa todos os dados locais e reseta o estado de mudanças não salvas."""
-    st.session_state.local_data = {}
-    st.session_state.unsaved_changes = False
+            del st.session_state.mock_snapshots[empreendimento][version_name]
+            st.success(f"✅ Snapshot '{version_name}' deletado localmente (modo offline)")
+            return True
+            
+        st.warning(f"⚠️ Snapshot '{version_name}' não encontrado localmente")
+        return False
 
 # --- Função para criar DataFrame de exemplo ---
 
 def create_mock_dataframe():
-    """Cria um DataFrame de exemplo com dados de projeto."""
     data = {
         'ID_Tarefa': [1, 2, 3, 4, 5, 6],
         'Empreendimento': ['Projeto A', 'Projeto A', 'Projeto B', 'Projeto B', 'Projeto A', 'Projeto B'],
         'Tarefa': ['Fase 1', 'Fase 2', 'Design', 'Implementação', 'Teste', 'Deploy'],
         'Real_Inicio': [pd.to_datetime('2025-10-01'), pd.to_datetime('2025-10-15'), pd.to_datetime('2025-11-01'), pd.to_datetime('2025-11-10'), pd.to_datetime('2025-10-26'), pd.to_datetime('2025-11-21')],
         'Real_Fim': [pd.to_datetime('2025-10-10'), pd.to_datetime('2025-10-25'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-20'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-25')],
-        'P0_Previsto_Inicio': [pd.to_datetime('2025-10-01'), pd.to_datetime('2025-10-15'), pd.to_datetime('2025-11-01'), pd.to_datetime('2025-11-10'), pd.to_datetime('2025-10-26'), pd.to_datetime('2025-11-21')],
-        'P0_Previsto_Fim': [pd.to_datetime('2025-10-10'), pd.to_datetime('2025-10-25'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-20'), pd.to_datetime('2025-11-05'), pd.to_datetime('2025-11-25')],
+        'P0_Previsto_Inicio': [pd.to_datetime('2025-09-25'), pd.to_datetime('2025-10-12'), pd.to_datetime('2025-10-28'), pd.to_datetime('2025-11-08'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-18')],
+        'P0_Previsto_Fim': [pd.to_datetime('2025-10-05'), pd.to_datetime('2025-10-20'), pd.to_datetime('2025-11-03'), pd.to_datetime('2025-11-15'), pd.to_datetime('2025-10-30'), pd.to_datetime('2025-11-22')],
     }
     df = pd.DataFrame(data)
+    df['Previsto_Inicio'] = df['P0_Previsto_Inicio']
+    df['Previsto_Fim'] = df['P0_Previsto_Fim']
     return df
 
-# --- Funções de Visualização ---
+# --- Lógica de Snapshot ---
+
+def take_snapshot(df, empreendimento):
+    df_empreendimento = df[df['Empreendimento'] == empreendimento].copy()
+    
+    existing_snapshots = load_snapshots()
+    empreendimento_snapshots = existing_snapshots.get(empreendimento, {})
+    existing_versions = [k for k in empreendimento_snapshots.keys() if k.startswith('P') and k.split('-')[0][1:].isdigit()]
+    
+    next_n = 1
+    if existing_versions:
+        max_n = 0
+        for version_name in existing_versions:
+            try:
+                n_str = version_name.split('-')[0][1:]
+                n = int(n_str)
+                if n > max_n:
+                    max_n = n
+            except ValueError:
+                continue
+        next_n = max_n + 1
+    
+    version_prefix = f"P{next_n}"
+    current_date_str = datetime.now().strftime("%d/%m/%Y")
+    version_name = f"{version_prefix}-({current_date_str})"
+    
+    # Prepara dados do snapshot
+    df_snapshot = df_empreendimento[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
+    df_snapshot['Real_Inicio'] = df_snapshot['Real_Inicio'].dt.strftime('%Y-%m-%d')
+    df_snapshot['Real_Fim'] = df_snapshot['Real_Fim'].dt.strftime('%Y-%m-%d')
+    
+    snapshot_data = df_snapshot.rename(
+        columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}
+    ).to_dict('records')
+
+    success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
+    
+    if success:
+        return version_name
+    else:
+        raise Exception("Falha ao salvar snapshot")
+
+# --- Solução Simplificada para Menu de Contexto ---
+
+def create_simple_context_menu(selected_empreendimento):
+    """Cria um menu de contexto simples usando apenas HTML/JS básico"""
+    
+    html_code = f"""
+<div id="gantt-area" style="height: 300px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; background-color: #f9f9f9; cursor: pointer; margin: 20px 0;">
+    <div style="text-align: center;">
+        <h3>Área do Gráfico de Gantt</h3>
+        <p>Clique com o botão direito para abrir o menu de snapshot</p>
+    </div>
+</div>
+
+<style>
+.context-menu {{
+    position: fixed;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+    z-index: 1000;
+    display: none;
+}}
+.context-menu-item {{
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}}
+.context-menu-item:hover {{
+    background: #f0f0f0;
+}}
+.context-menu-item:last-child {{
+    border-bottom: none;
+}}
+</style>
+
+<script>
+// Cria o menu de contexto
+const menu = document.createElement('div');
+menu.className = 'context-menu';
+menu.innerHTML = `
+    <div class="context-menu-item" onclick="takeSnapshot()">📸 Tirar Snapshot</div>
+    <div class="context-menu-item" onclick="restoreSnapshot()">🔄 Restaurar Snapshot</div>
+    <div class="context-menu-item" onclick="deleteSnapshot()">🗑️ Deletar Snapshot</div>
+`;
+document.body.appendChild(menu);
+
+// Funções do menu
+function takeSnapshot() {{
+    hideMenu();
+    window.location.href = `?snapshot_action=take_snapshot&empreendimento={selected_empreendimento}&timestamp=${{Date.now()}}`;
+}}
+
+function restoreSnapshot() {{
+    hideMenu();
+    window.location.href = `?snapshot_action=restore_snapshot&empreendimento={selected_empreendimento}&timestamp=${{Date.now()}}`;
+}}
+
+function deleteSnapshot() {{
+    hideMenu();
+    window.location.href = `?snapshot_action=delete_snapshot&empreendimento={selected_empreendimento}&timestamp=${{Date.now()}}`;
+}}
+
+function showMenu(x, y) {{
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.display = 'block';
+}}
+
+function hideMenu() {{
+    menu.style.display = 'none';
+}}
+
+// Event listeners
+document.getElementById('gantt-area').addEventListener('contextmenu', function(e) {{
+    e.preventDefault();
+    showMenu(e.pageX, e.pageY);
+}});
+
+document.addEventListener('click', function(e) {{
+    if (!menu.contains(e.target)) {{
+        hideMenu();
+    }}
+}});
+
+// Fecha o menu com ESC
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+        hideMenu();
+    }}
+}});
+</script>
+"""
+    return html_code
+
+# --- Função para processar ações do menu ---
+
+def process_snapshot_actions():
+    """Processa ações do menu de contexto via query parameters"""
+    query_params = st.query_params
+    
+    action = query_params.get('snapshot_action')
+    empreendimento = query_params.get('empreendimento')
+    
+    if action and empreendimento:
+        # Limpa os parâmetros imediatamente
+        st.query_params.clear()
+        
+        df = st.session_state.df
+        
+        if action == 'take_snapshot':
+            try:
+                version_name = take_snapshot(df, empreendimento)
+                st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao criar snapshot: {e}")
+        elif action == 'restore_snapshot':
+            st.warning("🔄 Funcionalidade de restaurar snapshot não implementada")
+        elif action == 'delete_snapshot':
+            st.warning("🗑️ Funcionalidade de deletar snapshot não implementada via menu")
+
+# --- Visualização de Comparação de Período ---
 
 def display_period_comparison(df_filtered, empreendimento_snapshots):
-    """Exibe a comparação entre dois snapshots de período."""
     st.subheader(f"⏳ Comparação de Período - {df_filtered['Empreendimento'].iloc[0]}")
     
     version_options = ["P0 (Planejamento Original)"]
@@ -287,7 +416,10 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
         else:
             version_data_list = empreendimento_snapshots[version_name]['data']
             df_version = pd.DataFrame(version_data_list)
-            df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
+            version_prefix = version_name.split('-')[0]
+            col_inicio = f'{version_prefix}_Previsto_Inicio'
+            col_fim = f'{version_prefix}_Previsto_Fim'
+            df_version = df_version.rename(columns={col_inicio: 'Inicio', col_fim: 'Fim'})
             
         df_version['Inicio'] = pd.to_datetime(df_version['Inicio'])
         df_version['Fim'] = pd.to_datetime(df_version['Fim'])
@@ -308,447 +440,100 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
     
     st.dataframe(df_final, use_container_width=True)
 
-# --- Componente Customizado para Menu de Contexto (Simplificado) ---
-
-def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
-    """
-    Componente customizado para o menu de contexto.
-    Versão simplificada que funciona melhor com Streamlit.
-    """
-    
-    # Combina snapshots AWS e locais para o menu
-    all_snapshots = {}
-    for version, data in snapshots_aws.items():
-        all_snapshots[version] = {'type': 'aws', 'date': data['date']}
-    for version, data in snapshots_local.items():
-        all_snapshots[version] = {'type': 'local', 'date': data['created_date']}
-        
-    snapshots_list = sorted(all_snapshots.keys())
-    
-    # HTML/JS para o menu de contexto - VERSÃO SIMPLIFICADA
-    js_code = f"""
-    <script>
-    // Função para criar e mostrar o menu de contexto
-    function showContextMenu(event) {{
-        event.preventDefault();
-        
-        // Remove menu anterior se existir
-        const oldMenu = document.getElementById('custom-context-menu');
-        if (oldMenu) {{
-            oldMenu.remove();
-        }}
-        
-        // Cria novo menu
-        const menu = document.createElement('div');
-        menu.id = 'custom-context-menu';
-        menu.style.position = 'fixed';
-        menu.style.left = event.pageX + 'px';
-        menu.style.top = event.pageY + 'px';
-        menu.style.backgroundColor = 'white';
-        menu.style.border = '1px solid #ccc';
-        menu.style.boxShadow = '2px 2px 5px rgba(0,0,0,0.2)';
-        menu.style.zIndex = '10000';
-        menu.style.padding = '5px 0';
-        menu.style.fontFamily = 'Arial, sans-serif';
-        menu.style.fontSize = '14px';
-        menu.style.minWidth = '200px';
-        
-        // Cria lista de opções
-        const list = document.createElement('ul');
-        list.style.listStyle = 'none';
-        list.style.margin = '0';
-        list.style.padding = '0';
-        
-        // Opção 1: Criar Snapshot Local
-        const item1 = document.createElement('li');
-        item1.textContent = '📸 Criar Snapshot Local';
-        item1.style.padding = '8px 15px';
-        item1.style.cursor = 'pointer';
-        item1.onmouseover = () => item1.style.backgroundColor = '#f0f0f0';
-        item1.onmouseout = () => item1.style.backgroundColor = 'transparent';
-        item1.onclick = () => {{
-            window.location.href = `?context_action=take_snapshot_local&empreendimento={empreendimento}&timestamp=${{Date.now()}}`;
-        }};
-        list.appendChild(item1);
-        
-        // Opção 2: Criar Snapshot AWS
-        const item2 = document.createElement('li');
-        item2.textContent = '🚀 Criar Snapshot AWS';
-        item2.style.padding = '8px 15px';
-        item2.style.cursor = 'pointer';
-        item2.onmouseover = () => item2.style.backgroundColor = '#f0f0f0';
-        item2.onmouseout = () => item2.style.backgroundColor = 'transparent';
-        item2.onclick = () => {{
-            window.location.href = `?context_action=take_snapshot_aws&empreendimento={empreendimento}&timestamp=${{Date.now()}}`;
-        }};
-        list.appendChild(item2);
-        
-        // Separador
-        const separator = document.createElement('hr');
-        separator.style.margin = '5px 0';
-        separator.style.border = 'none';
-        separator.style.borderTop = '1px solid #eee';
-        list.appendChild(separator);
-        
-        // Snapshots disponíveis
-        const snapshots = {json.dumps(all_snapshots)};
-        const snapshotList = {json.dumps(snapshots_list)};
-        
-        if (snapshotList.length > 0) {{
-            // Cabeçalho Restaurar
-            const restoreHeader = document.createElement('li');
-            restoreHeader.textContent = '🔄 Restaurar:';
-            restoreHeader.style.padding = '5px 15px';
-            restoreHeader.style.fontWeight = 'bold';
-            restoreHeader.style.color = '#555';
-            restoreHeader.style.cursor = 'default';
-            list.appendChild(restoreHeader);
-            
-            // Opções de Restauração
-            snapshotList.forEach(version => {{
-                const item = document.createElement('li');
-                item.textContent = `  - ${{version}} (${{snapshots[version].type.toUpperCase()}})`;
-                item.style.padding = '8px 15px';
-                item.style.cursor = 'pointer';
-                item.onmouseover = () => item.style.backgroundColor = '#f0f0f0';
-                item.onmouseout = () => item.style.backgroundColor = 'transparent';
-                item.onclick = () => {{
-                    window.location.href = `?context_action=restore_snapshot&empreendimento={empreendimento}&version=${{version}}&timestamp=${{Date.now()}}`;
-                }};
-                list.appendChild(item);
-            }});
-            
-            // Separador
-            const separator2 = document.createElement('hr');
-            separator2.style.margin = '5px 0';
-            separator2.style.border = 'none';
-            separator2.style.borderTop = '1px solid #eee';
-            list.appendChild(separator2);
-            
-            // Cabeçalho Deletar
-            const deleteHeader = document.createElement('li');
-            deleteHeader.textContent = '🗑️ Deletar:';
-            deleteHeader.style.padding = '5px 15px';
-            deleteHeader.style.fontWeight = 'bold';
-            deleteHeader.style.color = '#555';
-            deleteHeader.style.cursor = 'default';
-            list.appendChild(deleteHeader);
-            
-            // Opções de Deleção
-            snapshotList.forEach(version => {{
-                const item = document.createElement('li');
-                item.textContent = `  - ${{version}} (${{snapshots[version].type.toUpperCase()}})`;
-                item.style.padding = '8px 15px';
-                item.style.cursor = 'pointer';
-                item.onmouseover = () => item.style.backgroundColor = '#f0f0f0';
-                item.onmouseout = () => item.style.backgroundColor = 'transparent';
-                item.onclick = () => {{
-                    window.location.href = `?context_action=delete_snapshot&empreendimento={empreendimento}&version=${{version}}&timestamp=${{Date.now()}}`;
-                }};
-                list.appendChild(item);
-            }});
-        }} else {{
-            const noSnapshots = document.createElement('li');
-            noSnapshots.textContent = 'Nenhum snapshot disponível';
-            noSnapshots.style.padding = '8px 15px';
-            noSnapshots.style.color = '#aaa';
-            noSnapshots.style.cursor = 'default';
-            list.appendChild(noSnapshots);
-        }}
-        
-        menu.appendChild(list);
-        document.body.appendChild(menu);
-        
-        // Fecha o menu quando clicar fora
-        function closeMenu(e) {{
-            if (!menu.contains(e.target)) {{
-                menu.remove();
-                document.removeEventListener('click', closeMenu);
-            }}
-        }}
-        
-        // Aguarda um frame antes de adicionar o event listener para evitar fechamento imediato
-        setTimeout(() => {{
-            document.addEventListener('click', closeMenu);
-        }}, 0);
-    }}
-    
-    // Adiciona o event listener para clique direito em toda a página
-    document.addEventListener('contextmenu', showContextMenu);
-    </script>
-    """
-    
-    html(js_code, height=0)
-
-def process_context_actions(df, snapshots):
-    """Processa ações do menu de contexto via query parameters."""
-    try:
-        query_params = st.query_params
-        
-        action = query_params.get('context_action')
-        empreendimento = query_params.get('empreendimento')
-        version = query_params.get('version')
-        
-        if action and empreendimento:
-            # Validação básica
-            if empreendimento not in df['Empreendimento'].unique():
-                st.error(f"Empreendimento '{empreendimento}' não encontrado!")
-                st.query_params.clear()
-                return
-                
-            # Limpa os parâmetros
-            st.query_params.clear()
-            
-            if action == 'take_snapshot_local':
-                version_name, saved = take_snapshot(df, empreendimento, save_locally=True)
-                if saved:
-                    st.toast(f"✅ Snapshot '{version_name}' salvo localmente!")
-                else:
-                    st.toast(f"❌ Erro ao salvar snapshot local.")
-                    
-            elif action == 'take_snapshot_aws':
-                version_name, success = take_snapshot(df, empreendimento, save_locally=False)
-                if success:
-                    st.toast(f"✅ Snapshot '{version_name}' salvo na AWS!")
-                else:
-                    st.toast(f"❌ Erro ao salvar snapshot na AWS.")
-                    
-            elif action == 'restore_snapshot':
-                if version:
-                    st.warning(f"🔄 Funcionalidade de restaurar snapshot '{version}' não implementada completamente.")
-                else:
-                    st.error("❌ Versão não especificada para restauração.")
-                    
-            elif action == 'delete_snapshot':
-                if version:
-                    # Verifica se existe na AWS
-                    if version in snapshots.get(empreendimento, {}):
-                        if delete_snapshot(empreendimento, version):
-                            st.toast(f"🗑️ Snapshot AWS '{version}' deletado!")
-                        else:
-                            st.toast(f"❌ Erro ao deletar snapshot AWS.")
-                    else:
-                        # Verifica se existe localmente
-                        local_data = st.session_state.get('local_data', {})
-                        if version in local_data and local_data[version].get('empreendimento') == empreendimento:
-                            del st.session_state.local_data[version]
-                            st.session_state.unsaved_changes = any(
-                                not data.get('saved_to_aws') 
-                                for data in st.session_state.local_data.values()
-                            )
-                            st.toast(f"🗑️ Snapshot Local '{version}' deletado!")
-                        else:
-                            st.toast(f"❌ Snapshot '{version}' não encontrado.")
-                else:
-                    st.error("❌ Versão não especificada para deleção.")
-            
-            st.rerun()
-            
-    except Exception as e:
-        st.error(f"❌ Erro ao processar ação do menu de contexto: {e}")
-        st.query_params.clear()
-
-# --- Função para gerenciar edição de dados ---
-
-def handle_data_editor_changes(edited_df, original_df, selected_empreendimento):
-    """Manipula as mudanças no data_editor e atualiza o DataFrame principal."""
-    # Compara os DataFrames para detectar mudanças
-    if not edited_df.equals(original_df[original_df['Empreendimento'] == selected_empreendimento]):
-        # Atualiza o DataFrame principal
-        df_updated = original_df.copy()
-        mask = df_updated['Empreendimento'] == selected_empreendimento
-        df_updated.loc[mask, edited_df.columns] = edited_df.values
-        
-        st.session_state.df = df_updated
-        st.session_state.unsaved_changes = True
-        st.toast("✅ Mudanças aplicadas com sucesso!")
-        return True
-    return False
-
 # --- Aplicação Principal ---
 
 def main():
     st.set_page_config(layout="wide", page_title="Gantt Chart Baseline")
     st.title("📊 Gráfico de Gantt com Versionamento")
     
-    # --- Inicialização de Estado da Sessão ---
-    if 'unsaved_changes' not in st.session_state:
-        st.session_state.unsaved_changes = False
-    if 'local_data' not in st.session_state:
-        st.session_state.local_data = {}
+    # Inicialização do estado
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
-    if 'show_comparison' not in st.session_state:
-        st.session_state.show_comparison = False
-    if 'selected_empreendimento' not in st.session_state:
-        st.session_state.selected_empreendimento = st.session_state.df['Empreendimento'].unique().tolist()[0]
-        
-    # --- Inicialização de Banco de Dados ---
+    
+    # Verificação de conexão
+    st.sidebar.markdown("### 🔗 Status da Conexão")
+    conn = get_db_connection()
+    if conn:
+        st.sidebar.success("✅ Conectado à AWS")
+        if conn.is_connected():
+            conn.close()
+    else:
+        st.sidebar.warning("🔶 Modo Offline - Armazenamento Local")
+    
+    # Inicialização do banco
     create_snapshots_table()
     
-    # --- Carregamento de Dados ---
+    # Processa ações do menu primeiro
+    process_snapshot_actions()
+    
+    # Dados
     df = st.session_state.df
     snapshots = load_snapshots()
     
-    # --- Processamento de Ações do Menu de Contexto (DEVE ser antes da sidebar) ---
-    process_context_actions(df, snapshots)
+    # Sidebar
+    empreendimentos = df['Empreendimento'].unique().tolist()
+    selected_empreendimento = st.sidebar.selectbox("🏢 Empreendimento", empreendimentos)
+    df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
     
-    # --- Sidebar ---
+    # Botões de ação na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📸 Ações Rápidas")
     
-    with st.sidebar:
-        st.header("Configurações")
-        
-        # Seleção de Empreendimento
-        empreendimentos = df['Empreendimento'].unique().tolist()
-        selected_empreendimento = st.selectbox(
-            "🏢 Empreendimento", 
-            empreendimentos, 
-            key="selected_empreendimento"
-        )
-        
-        df_filtered = df[df['Empreendimento'] == selected_empreendimento].copy()
-        
-        st.markdown("---")
-        st.markdown("### 💾 Dados Locais")
-        
-        # Indicador de mudanças não salvas
-        if st.session_state.unsaved_changes:
-            st.warning("⚠️ Você tem dados não salvos na AWS!")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("🗑️ Limpar Locais", use_container_width=True, help="Remove todos os dados locais"):
-                clear_local_data()
-                st.success("Dados locais limpos!")
-                st.rerun()
-        
-        with col2:
-            if st.button("🚀 Enviar para AWS", type="primary", use_container_width=True, 
-                                disabled=not st.session_state.unsaved_changes):
-                with st.spinner("Enviando dados para AWS..."):
-                    saved_count, error_count = save_local_to_aws()
-                    
-                    if error_count == 0:
-                        if saved_count > 0:
-                            st.success(f"✅ {saved_count} snapshot(s) salvos na AWS!")
-                        else:
-                            st.info("ℹ️ Nenhum dado novo para salvar na AWS.")
-                    else:
-                        st.error(f"❌ Erro ao salvar {error_count} snapshot(s) na AWS.")
-                
-                st.rerun()
-        
-        st.markdown("---")
-        st.markdown("### 📸 Ações Rápidas")
-        
-        if st.button("📸 Criar Snapshot Local", use_container_width=True):
-            try:
-                version_name, saved_locally = take_snapshot(df, selected_empreendimento, save_locally=True)
-                if saved_locally:
-                    st.toast(f"✅ {version_name} salvo localmente!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro: {e}")
-        
-        if st.button("🚀 Criar Snapshot AWS", use_container_width=True):
-            try:
-                version_name, success = take_snapshot(df, selected_empreendimento, save_locally=False)
-                if success:
-                    st.toast(f"✅ {version_name} salvo diretamente na AWS!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro: {e}")
-        
-        if st.button("⏳ Comparar Períodos", use_container_width=True):
-            st.session_state.show_comparison = not st.session_state.show_comparison
+    if st.sidebar.button("📸 Criar Snapshot", use_container_width=True):
+        try:
+            version_name = take_snapshot(df, selected_empreendimento)
+            st.success(f"✅ {version_name} criado!")
             st.rerun()
-            
-        st.markdown("---")
-        st.markdown("### 🔧 Gerenciar Snapshots AWS")
-        
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        if empreendimento_snapshots:
-            for version_name in sorted(empreendimento_snapshots.keys()):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"`{version_name}`")
-                with col2:
-                    if st.button("🗑️", key=f"del_aws_{version_name}"):
-                        if delete_snapshot(selected_empreendimento, version_name):
-                            st.success(f"✅ {version_name} deletado!")
-                        st.rerun()
-        else:
-            st.info("Nenhum snapshot AWS")
-
-    # --- Visualização Principal ---
+        except Exception as e:
+            st.error(f"❌ Erro: {e}")
     
+    if st.sidebar.button("⏳ Comparar Períodos", use_container_width=True):
+        st.session_state.show_comparison = not st.session_state.get('show_comparison', False)
+        st.rerun()
+    
+    # Visualização principal
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader(f"Dados do Projeto: {selected_empreendimento}")
-        
-        # Exibe informações sobre o estado da conexão
-        conn = get_db_connection()
-        if not conn:
-            st.info("🔶 Modo offline: usando armazenamento local (sem conexão com AWS)")
-        
-        # Tabela editável - SEM key para evitar conflitos
-        edited_df = st.data_editor(
-            df_filtered,
-            use_container_width=True,
-            hide_index=True,
-            column_order=('ID_Tarefa', 'Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim'),
-            num_rows="fixed"
-        )
-        
-        # Botão para aplicar mudanças
-        if st.button("💾 Aplicar Mudanças", type="primary"):
-            if handle_data_editor_changes(edited_df, df, selected_empreendimento):
-                st.rerun()
-            
-        st.info("💡 **Instruções:** Edite os dados acima e clique em 'Aplicar Mudanças' para salvar. Use o **clique com botão direito** em qualquer lugar da página para acessar o menu de contexto.")
-            
+        st.subheader("Dados do Projeto")
+        st.dataframe(df_filtered, use_container_width=True)
+    
     with col2:
-        st.subheader("Snapshots AWS")
+        st.subheader("Snapshots")
         empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         if empreendimento_snapshots:
             for version in sorted(empreendimento_snapshots.keys()):
-                st.write(f"• {version} ({empreendimento_snapshots[version]['date']})")
+                st.write(f"• {version}")
         else:
-            st.info("Nenhum snapshot na AWS")
-        
-        st.subheader("Snapshots Locais")
-        local_snapshots = {}
-        for version, data in st.session_state.get('local_data', {}).items():
-            if data.get('empreendimento') == selected_empreendimento:
-                local_snapshots[version] = data
-        
-        if local_snapshots:
-            for version in sorted(local_snapshots.keys()):
-                status = "✅" if local_snapshots[version].get('saved_to_aws') else "⏳"
-                st.write(f"• {version} ({local_snapshots[version]['created_date']}) {status}")
-        else:
-            st.info("Nenhum snapshot local")
-            
-    # --- Menu de Contexto ---
+            st.info("Nenhum snapshot")
+    
+    # Menu de contexto
     st.markdown("---")
-    st.subheader("Menu de Contexto")
-    st.markdown("**Clique com o botão direito do mouse em qualquer lugar da página** para abrir o menu de contexto com opções de snapshot.")
+    st.subheader("Menu de Contexto (Clique com Botão Direito)")
+    context_menu_html = create_simple_context_menu(selected_empreendimento)
+    html(context_menu_html, height=350)
     
-    # Prepara dados para o componente de menu de contexto
-    local_snapshots_menu = {
-        v: d for v, d in st.session_state.get('local_data', {}).items() 
-        if d.get('empreendimento') == selected_empreendimento
-    }
-    
-    # Renderiza o menu de contexto
-    context_menu_component(selected_empreendimento, empreendimento_snapshots, local_snapshots_menu)
-    
-    # --- Comparação de Períodos ---
-    if st.session_state.show_comparison:
+    # Comparação de períodos
+    if st.session_state.get('show_comparison', False):
         st.markdown("---")
+        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
         display_period_comparison(df_filtered, empreendimento_snapshots)
+    
+    # Gerenciamento de snapshots na sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 Gerenciar Snapshots")
+    
+    empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
+    if empreendimento_snapshots:
+        for version_name in sorted(empreendimento_snapshots.keys()):
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                st.write(f"`{version_name}`")
+            with col2:
+                if st.button("🗑️", key=f"del_{version_name}"):
+                    if delete_snapshot(selected_empreendimento, version_name):
+                        st.success(f"✅ {version_name} deletado!")
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
