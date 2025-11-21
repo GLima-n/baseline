@@ -237,10 +237,10 @@ def send_to_aws(empreendimento, version_name):
         st.error(f"Erro ao enviar para AWS: {e}")
         return False
 
-# --- Menu de Contexto Sem Recarregamento ---
+# --- Menu de Contexto que REALMENTE funciona ---
 
 def create_context_menu_component(selected_empreendimento):
-    """Cria o componente do menu de contexto sem recarregar a página"""
+    """Cria o componente do menu de contexto que realmente cria snapshots"""
     
     # HTML completo com CSS e JavaScript
     context_menu_html = f"""
@@ -325,8 +325,6 @@ def create_context_menu_component(selected_empreendimento):
     const contextMenu = document.getElementById('context-menu');
     const statusDiv = document.getElementById('snapshot-status');
     const takeSnapshotBtn = document.getElementById('take-snapshot');
-    const restoreSnapshotBtn = document.getElementById('restore-snapshot');
-    const deleteSnapshotBtn = document.getElementById('delete-snapshot');
     
     // Função para mostrar o menu
     function showContextMenu(x, y) {{
@@ -347,41 +345,22 @@ def create_context_menu_component(selected_empreendimento):
         statusDiv.classList.add(type);
         statusDiv.style.display = 'block';
         
-        // Auto-esconder após 3 segundos
+        // Auto-esconder após 5 segundos
         setTimeout(() => {{
             statusDiv.style.display = 'none';
-        }}, 3000);
+        }}, 5000);
     }}
     
-    // Função para executar ação sem recarregar a página
-    function executeAction(action) {{
-        if (action === 'take_snapshot') {{
-            showStatus('🔄 Criando snapshot...', 'status-creating');
-            
-            // Simular criação do snapshot (em uma aplicação real, isso seria uma chamada AJAX)
-            setTimeout(() => {{
-                // Aqui você enviaria os dados via AJAX para o servidor
-                // Por enquanto, vamos apenas simular o sucesso
-                showStatus('✅ Snapshot criado com sucesso! Os dados estarão disponíveis para envio na barra lateral.', 'status-success');
-                
-                // Forçar atualização da sidebar (simulado)
-                console.log('Snapshot criado - atualizar interface');
-            }}, 1000);
-            
-        }} else if (action === 'restore_snapshot') {{
-            showStatus('🔄 Restaurando snapshot...', 'status-creating');
-            setTimeout(() => {{
-                showStatus('✅ Snapshot restaurado com sucesso!', 'status-success');
-            }}, 1000);
-            
-        }} else if (action === 'delete_snapshot') {{
-            showStatus('🗑️ Deletando snapshot...', 'status-creating');
-            setTimeout(() => {{
-                showStatus('✅ Snapshot deletado com sucesso!', 'status-success');
-            }}, 1000);
-        }}
+    // Função para criar snapshot REAL
+    function executeTakeSnapshot() {{
+        showStatus('🔄 Criando snapshot...', 'status-creating');
         
-        hideContextMenu();
+        // Criar URL com parâmetros para o Streamlit processar
+        const timestamp = new Date().getTime();
+        const url = `?context_action=take_snapshot&empreendimento={selected_empreendimento}&t=${{timestamp}}&source=context_menu`;
+        
+        // Navegar para a URL - isso fará o Streamlit processar a ação
+        window.location.href = url;
     }}
     
     // Event Listeners
@@ -393,22 +372,29 @@ def create_context_menu_component(selected_empreendimento):
         }});
     }}
     
-    // Event listeners para os botões do menu
+    // Event listener para o botão de tirar snapshot
     if (takeSnapshotBtn) {{
         takeSnapshotBtn.addEventListener('click', function() {{
-            executeAction('take_snapshot');
+            executeTakeSnapshot();
+            hideContextMenu();
         }});
     }}
     
+    // Event listeners para outros botões (placeholder)
+    const restoreSnapshotBtn = document.getElementById('restore-snapshot');
+    const deleteSnapshotBtn = document.getElementById('delete-snapshot');
+    
     if (restoreSnapshotBtn) {{
         restoreSnapshotBtn.addEventListener('click', function() {{
-            executeAction('restore_snapshot');
+            showStatus('🔄 Funcionalidade em desenvolvimento...', 'status-creating');
+            hideContextMenu();
         }});
     }}
     
     if (deleteSnapshotBtn) {{
         deleteSnapshotBtn.addEventListener('click', function() {{
-            executeAction('delete_snapshot');
+            showStatus('🗑️ Funcionalidade em desenvolvimento...', 'status-creating');
+            hideContextMenu();
         }});
     }}
     
@@ -437,6 +423,30 @@ def create_context_menu_component(selected_empreendimento):
     
     # Usar html() para injetar o componente completo
     html(context_menu_html, height=400)
+
+# --- Processar ações do menu de contexto ---
+
+def process_context_menu_actions():
+    """Processa ações do menu de contexto"""
+    query_params = st.query_params
+    
+    if 'context_action' in query_params and 'empreendimento' in query_params:
+        action = query_params['context_action']
+        empreendimento = query_params['empreendimento']
+        source = query_params.get('source', '')
+        
+        # Só processar se veio do menu de contexto
+        if source == 'context_menu':
+            # Limpar os parâmetros
+            st.query_params.clear()
+            
+            if action == 'take_snapshot':
+                try:
+                    version_name = take_snapshot(st.session_state.df, empreendimento)
+                    st.success(f"✅ Snapshot '{version_name}' criado com sucesso!")
+                    st.session_state.snapshot_created = True
+                except Exception as e:
+                    st.error(f"❌ Erro ao criar snapshot: {e}")
 
 # --- Visualização de Comparação de Período ---
 
@@ -501,9 +511,14 @@ def main():
         st.session_state.unsent_snapshots = {}
     if 'show_comparison' not in st.session_state:
         st.session_state.show_comparison = False
+    if 'snapshot_created' not in st.session_state:
+        st.session_state.snapshot_created = False
     
     # Inicialização do banco
     create_snapshots_table()
+    
+    # Processar ações do menu PRIMEIRO
+    process_context_menu_actions()
     
     # Dados
     df = st.session_state.df
