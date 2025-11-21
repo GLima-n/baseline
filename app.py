@@ -60,7 +60,8 @@ def create_snapshots_table():
             conn.commit()
         except Error as e:
             # Exibe o erro apenas se a conexão foi bem-sucedida, mas a query falhou
-            st.error(f"Erro ao criar tabela: {e}")
+            if conn:
+                st.error(f"Erro ao criar tabela: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -93,7 +94,8 @@ def load_snapshots():
             return snapshots
         except Error as e:
             # Exibe o erro apenas se a conexão foi bem-sucedida, mas a query falhou
-            st.error(f"Erro ao carregar snapshots: {e}")
+            if conn:
+                st.error(f"Erro ao carregar snapshots: {e}")
             return {}
         finally:
             if conn and conn.is_connected():
@@ -359,7 +361,8 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             restoreHeader.className = 'menu-header';
             list.appendChild(restoreHeader);
             
-            snapshotList.forEach(version => {{
+            snapshotList.forEach(v => {{
+                let version = v; // Garante que 'version' está no escopo do loop
                 let item = document.createElement('li');
                 item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
                 item.onclick = () => sendAction('restore_snapshot', version);
@@ -373,7 +376,8 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             deleteHeader.className = 'menu-header';
             list.appendChild(deleteHeader);
             
-            snapshotList.forEach(version => {{
+            snapshotList.forEach(v => {{
+                let version = v; // Garante que 'version' está no escopo do loop
                 let item = document.createElement('li');
                 item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
                 item.onclick = () => sendAction('delete_snapshot', version);
@@ -632,7 +636,8 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             restoreHeader.className = 'menu-header';
             list.appendChild(restoreHeader);
             
-            snapshotList.forEach(version => {{
+            snapshotList.forEach(v => {{
+                let version = v; // Garante que 'version' está no escopo do loop
                 let item = document.createElement('li');
                 item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
                 item.onclick = () => sendAction('restore_snapshot', version);
@@ -646,7 +651,8 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             deleteHeader.className = 'menu-header';
             list.appendChild(deleteHeader);
             
-            snapshotList.forEach(version => {{
+            snapshotList.forEach(v => {{
+                let version = v; // Garante que 'version' está no escopo do loop
                 let item = document.createElement('li');
                 item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
                 item.onclick = () => sendAction('delete_snapshot', version);
