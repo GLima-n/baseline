@@ -256,7 +256,7 @@ def buffer_new_snapshot(df, empreendimento):
 
 def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes):
     """
-    Gera o HTML do menu E o script que bloqueia o reload da página se houver dados não salvos.
+    Gera o HTML do menu E o script corrigido para bypassar o bloqueio de segurança (CORS/Sandbox).
     """
     
     # Converte booleano python para string bool js
@@ -301,18 +301,19 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
     // --- LÓGICA DE PROTEÇÃO CONTRA PERDA DE DADOS ---
     const hasUnsaved = {js_has_unsaved};
     
-    // Acessa a janela pai (onde o Streamlit roda)
-    if (window.parent) {{
-        if (hasUnsaved) {{
+    // Tenta acessar o pai, mas falha silenciosamente se bloqueado
+    try {{
+        if (window.parent && hasUnsaved) {{
             window.parent.onbeforeunload = function(e) {{
                 e = e || window.event;
-                // Mensagem padrão (navegadores modernos ignoram o texto customizado, mas mostram o alerta)
-                if (e) {{ e.returnValue = 'Você tem snapshots pendentes de envio para a AWS!'; }}
-                return 'Você tem snapshots pendentes de envio para a AWS!';
+                if (e) {{ e.returnValue = 'Você tem snapshots pendentes!'; }}
+                return 'Você tem snapshots pendentes!';
             }};
-        }} else {{
+        }} else if (window.parent) {{
             window.parent.onbeforeunload = null;
         }}
+    }} catch (e) {{
+        console.log("Acesso ao window.parent bloqueado pelo navegador (esperado em alguns ambientes).");
     }}
 
     // --- MENU DE CONTEXTO ---
@@ -324,12 +325,21 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
     `;
     document.body.appendChild(menu);
 
+    // --- CORREÇÃO DO ERRO SECURITYERROR ---
     function triggerAction(action) {{
         menu.style.display = 'none';
-        // Envia comando para o Python via URL param (Streamlit detecta e roda o script)
+        
         const timestamp = Date.now();
-        const url = `?snapshot_action=${{action}}&empreendimento={selected_empreendimento}&ts=${{timestamp}}`;
-        window.parent.location.search = url; // Usa parent para mudar a URL principal
+        // Encode URI Component é essencial para evitar erros com espaços no nome
+        const empSafe = encodeURIComponent("{selected_empreendimento}");
+        
+        // Em vez de window.parent.location = ..., usamos um link target="_top"
+        const link = document.createElement('a');
+        link.href = `?snapshot_action=${{action}}&empreendimento=${{empSafe}}&ts=${{timestamp}}`;
+        link.target = "_top"; // Isso força a navegação na janela principal, bypassando o sandbox
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }}
 
     const ganttArea = document.getElementById('gantt-area');
@@ -353,7 +363,7 @@ def create_context_menu_and_warning(selected_empreendimento, has_unsaved_changes
     </script>
     """
     return html_code
-
+    
 def process_url_actions():
     """Processa a ação e LIMPA a URL imediatamente para evitar loops."""
     # Acessa query params da nova forma (st.query_params)
@@ -481,3 +491,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
