@@ -8,7 +8,6 @@ import urllib.parse
 from streamlit.components.v1 import html
 
 # --- Configurações do Banco AWS ---
-# Mantendo a estrutura original para compatibilidade com st.secrets
 try:
     DB_CONFIG = {
         'host': st.secrets["aws_db"]["host"],
@@ -18,7 +17,6 @@ try:
         'port': 3306
     }
 except Exception:
-    # Mock para ambiente de desenvolvimento/teste
     DB_CONFIG = {
         'host': "mock_host",
         'user': "mock_user",
@@ -27,7 +25,7 @@ except Exception:
         'port': 3306
     }
 
-# --- Funções de Banco de Dados (Mantidas, mas otimizadas para uso) ---
+# --- Funções de Banco de Dados ---
 
 @st.cache_resource
 def get_db_connection():
@@ -72,7 +70,7 @@ def create_snapshots_table():
         if 'mock_snapshots' not in st.session_state:
             st.session_state.mock_snapshots = {}
 
-@st.cache_data(ttl=3600) # Cache de 1 hora para dados de snapshots
+@st.cache_data(ttl=3600)
 def load_snapshots():
     """Carrega todos os snapshots do banco de dados ou mock."""
     conn = get_db_connection()
@@ -136,7 +134,7 @@ def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
             """
             cursor.execute(insert_query, (empreendimento, version_name, snapshot_json, created_date))
             conn.commit()
-            load_snapshots.clear() # Limpa o cache para recarregar
+            load_snapshots.clear()
             return True
         except Error as e:
             st.error(f"Erro ao salvar snapshot: {e}")
@@ -165,7 +163,7 @@ def delete_snapshot(empreendimento, version_name):
             delete_query = "DELETE FROM snapshots WHERE empreendimento = %s AND version_name = %s"
             cursor.execute(delete_query, (empreendimento, version_name))
             conn.commit()
-            load_snapshots.clear() # Limpa o cache para recarregar
+            load_snapshots.clear()
             return cursor.rowcount > 0
         except Error as e:
             st.error(f"Erro ao deletar snapshot: {e}")
@@ -180,13 +178,12 @@ def delete_snapshot(empreendimento, version_name):
             return True
         return False
 
-# --- Funções para Gerenciar Dados Locais (Simplificadas e Integradas) ---
+# --- Funções para Gerenciar Dados Locais ---
 
 def take_snapshot(df, empreendimento, save_locally=True):
     """Cria um snapshot dos dados filtrados e salva localmente ou na AWS."""
     df_filtered = df[df['Empreendimento'] == empreendimento].copy()
     
-    # Prepara os dados para salvar (apenas colunas de planejamento)
     snapshot_data = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim']].to_dict('records')
     
     now = datetime.now()
@@ -197,7 +194,6 @@ def take_snapshot(df, empreendimento, save_locally=True):
         if 'local_data' not in st.session_state:
             st.session_state.local_data = {}
         
-        # Estrutura de dados local simplificada
         st.session_state.local_data[version_name] = {
             'empreendimento': empreendimento,
             'version_name': version_name,
@@ -236,11 +232,9 @@ def save_local_to_aws():
             else:
                 error_count += 1
                 
-    # Atualiza o estado da sessão para marcar como salvo
     for version_name in keys_to_update:
         st.session_state.local_data[version_name]['saved_to_aws'] = True
         
-    # Verifica se ainda há mudanças não salvas
     st.session_state.unsaved_changes = any(not data.get('saved_to_aws') for data in st.session_state.local_data.values())
     
     return saved_count, error_count
@@ -291,11 +285,8 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
             df_version = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim']].copy()
             df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
         else:
-            # O snapshot_data agora é uma lista de dicionários
             version_data_list = empreendimento_snapshots[version_name]['data']
             df_version = pd.DataFrame(version_data_list)
-            
-            # Mapeamento de colunas para o formato esperado
             df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
             
         df_version['Inicio'] = pd.to_datetime(df_version['Inicio'])
@@ -317,12 +308,12 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
     
     st.dataframe(df_final, use_container_width=True)
 
-# --- Componente Customizado para Menu de Contexto (Corrigido) ---
+# --- Componente Customizado para Menu de Contexto (Simplificado) ---
 
 def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
     """
     Componente customizado para o menu de contexto.
-    Usa um componente Streamlit para enviar dados de volta sem query params/rerun.
+    Versão simplificada que funciona melhor com Streamlit.
     """
     
     # Combina snapshots AWS e locais para o menu
@@ -334,156 +325,163 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         
     snapshots_list = sorted(all_snapshots.keys())
     
-    # Serializa os dados para o JavaScript
-    all_snapshots_json = json.dumps(all_snapshots)
-    
-    # HTML/JS para o menu de contexto - CORRIGIDO
+    # HTML/JS para o menu de contexto - VERSÃO SIMPLIFICADA
     js_code = f"""
     <script>
-    function openContextMenu(event) {{
+    // Função para criar e mostrar o menu de contexto
+    function showContextMenu(event) {{
         event.preventDefault();
         
-        const menu = document.getElementById('custom-context-menu');
-        menu.style.display = 'block';
+        // Remove menu anterior se existir
+        const oldMenu = document.getElementById('custom-context-menu');
+        if (oldMenu) {{
+            oldMenu.remove();
+        }}
+        
+        // Cria novo menu
+        const menu = document.createElement('div');
+        menu.id = 'custom-context-menu';
+        menu.style.position = 'fixed';
         menu.style.left = event.pageX + 'px';
         menu.style.top = event.pageY + 'px';
+        menu.style.backgroundColor = 'white';
+        menu.style.border = '1px solid #ccc';
+        menu.style.boxShadow = '2px 2px 5px rgba(0,0,0,0.2)';
+        menu.style.zIndex = '10000';
+        menu.style.padding = '5px 0';
+        menu.style.fontFamily = 'Arial, sans-serif';
+        menu.style.fontSize = '14px';
+        menu.style.minWidth = '200px';
         
-        const list = document.getElementById('context-menu-list');
-        list.innerHTML = '';
+        // Cria lista de opções
+        const list = document.createElement('ul');
+        list.style.listStyle = 'none';
+        list.style.margin = '0';
+        list.style.padding = '0';
         
-        // Opções de Ação
-        let item1 = document.createElement('li');
+        // Opção 1: Criar Snapshot Local
+        const item1 = document.createElement('li');
         item1.textContent = '📸 Criar Snapshot Local';
-        item1.onclick = () => sendAction('take_snapshot_local');
+        item1.style.padding = '8px 15px';
+        item1.style.cursor = 'pointer';
+        item1.onmouseover = () => item1.style.backgroundColor = '#f0f0f0';
+        item1.onmouseout = () => item1.style.backgroundColor = 'transparent';
+        item1.onclick = () => {{
+            window.location.href = `?context_action=take_snapshot_local&empreendimento={empreendimento}&timestamp=${{Date.now()}}`;
+        }};
         list.appendChild(item1);
         
-        let item2 = document.createElement('li');
+        // Opção 2: Criar Snapshot AWS
+        const item2 = document.createElement('li');
         item2.textContent = '🚀 Criar Snapshot AWS';
-        item2.onclick = () => sendAction('take_snapshot_aws');
+        item2.style.padding = '8px 15px';
+        item2.style.cursor = 'pointer';
+        item2.onmouseover = () => item2.style.backgroundColor = '#f0f0f0';
+        item2.onmouseout = () => item2.style.backgroundColor = 'transparent';
+        item2.onclick = () => {{
+            window.location.href = `?context_action=take_snapshot_aws&empreendimento={empreendimento}&timestamp=${{Date.now()}}`;
+        }};
         list.appendChild(item2);
         
-        list.appendChild(document.createElement('hr'));
+        // Separador
+        const separator = document.createElement('hr');
+        separator.style.margin = '5px 0';
+        separator.style.border = 'none';
+        separator.style.borderTop = '1px solid #eee';
+        list.appendChild(separator);
         
-        // Opções de Restauração/Deleção - CORRIGIDO: usando version no loop
-        const snapshots = {all_snapshots_json};
+        // Snapshots disponíveis
+        const snapshots = {json.dumps(all_snapshots)};
         const snapshotList = {json.dumps(snapshots_list)};
         
         if (snapshotList.length > 0) {{
-            let restoreHeader = document.createElement('li');
+            // Cabeçalho Restaurar
+            const restoreHeader = document.createElement('li');
             restoreHeader.textContent = '🔄 Restaurar:';
-            restoreHeader.className = 'menu-header';
+            restoreHeader.style.padding = '5px 15px';
+            restoreHeader.style.fontWeight = 'bold';
+            restoreHeader.style.color = '#555';
+            restoreHeader.style.cursor = 'default';
             list.appendChild(restoreHeader);
             
+            // Opções de Restauração
             snapshotList.forEach(version => {{
-                let item = document.createElement('li');
+                const item = document.createElement('li');
                 item.textContent = `  - ${{version}} (${{snapshots[version].type.toUpperCase()}})`;
-                item.onclick = () => sendAction('restore_snapshot', version);
+                item.style.padding = '8px 15px';
+                item.style.cursor = 'pointer';
+                item.onmouseover = () => item.style.backgroundColor = '#f0f0f0';
+                item.onmouseout = () => item.style.backgroundColor = 'transparent';
+                item.onclick = () => {{
+                    window.location.href = `?context_action=restore_snapshot&empreendimento={empreendimento}&version=${{version}}&timestamp=${{Date.now()}}`;
+                }};
                 list.appendChild(item);
             }});
             
-            list.appendChild(document.createElement('hr'));
+            // Separador
+            const separator2 = document.createElement('hr');
+            separator2.style.margin = '5px 0';
+            separator2.style.border = 'none';
+            separator2.style.borderTop = '1px solid #eee';
+            list.appendChild(separator2);
             
-            let deleteHeader = document.createElement('li');
+            // Cabeçalho Deletar
+            const deleteHeader = document.createElement('li');
             deleteHeader.textContent = '🗑️ Deletar:';
-            deleteHeader.className = 'menu-header';
+            deleteHeader.style.padding = '5px 15px';
+            deleteHeader.style.fontWeight = 'bold';
+            deleteHeader.style.color = '#555';
+            deleteHeader.style.cursor = 'default';
             list.appendChild(deleteHeader);
             
+            // Opções de Deleção
             snapshotList.forEach(version => {{
-                let item = document.createElement('li');
+                const item = document.createElement('li');
                 item.textContent = `  - ${{version}} (${{snapshots[version].type.toUpperCase()}})`;
-                item.onclick = () => sendAction('delete_snapshot', version);
+                item.style.padding = '8px 15px';
+                item.style.cursor = 'pointer';
+                item.onmouseover = () => item.style.backgroundColor = '#f0f0f0';
+                item.onmouseout = () => item.style.backgroundColor = 'transparent';
+                item.onclick = () => {{
+                    window.location.href = `?context_action=delete_snapshot&empreendimento={empreendimento}&version=${{version}}&timestamp=${{Date.now()}}`;
+                }};
                 list.appendChild(item);
             }});
         }} else {{
-            let item = document.createElement('li');
-            item.textContent = 'Nenhum snapshot disponível';
-            item.className = 'menu-disabled';
-            list.appendChild(item);
+            const noSnapshots = document.createElement('li');
+            noSnapshots.textContent = 'Nenhum snapshot disponível';
+            noSnapshots.style.padding = '8px 15px';
+            noSnapshots.style.color = '#aaa';
+            noSnapshots.style.cursor = 'default';
+            list.appendChild(noSnapshots);
         }}
-    }}
-
-    function sendAction(action, version = null) {{
-        const data = {{
-            action: action,
-            empreendimento: '{empreendimento}',
-            version: version
-        }};
         
-        // Usa query parameters para comunicação com Streamlit
-        const params = new URLSearchParams();
-        params.set('context_action', action);
-        params.set('empreendimento', '{empreendimento}');
-        if (version) params.set('version', version);
-        params.set('timestamp', Date.now().toString());
+        menu.appendChild(list);
+        document.body.appendChild(menu);
         
-        window.location.search = params.toString();
+        // Fecha o menu quando clicar fora
+        function closeMenu(e) {{
+            if (!menu.contains(e.target)) {{
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }}
+        }}
+        
+        // Aguarda um frame antes de adicionar o event listener para evitar fechamento imediato
+        setTimeout(() => {{
+            document.addEventListener('click', closeMenu);
+        }}, 0);
     }}
-
-    function closeContextMenu() {{
-        document.getElementById('custom-context-menu').style.display = 'none';
-    }}
-
-    // Adiciona o ouvinte de clique direito ao corpo do documento
-    document.addEventListener('contextmenu', openContextMenu);
-    document.addEventListener('click', closeContextMenu);
     
-    // Estilos CSS para o menu
-    const style = document.createElement('style');
-    style.innerHTML = `
-        #custom-context-menu {{
-            position: absolute;
-            background-color: #fff;
-            border: 1px solid #ccc;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
-            z-index: 10000;
-            display: none;
-            padding: 5px 0;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-        }}
-        #context-menu-list {{
-            list-style: none;
-            margin: 0;
-            padding: 0;
-        }}
-        #context-menu-list li {{
-            padding: 8px 15px;
-            cursor: pointer;
-        }}
-        #context-menu-list li:hover {{
-            background-color: #f0f0f0;
-        }}
-        #context-menu-list hr {{
-            border: none;
-            border-top: 1px solid #eee;
-            margin: 5px 0;
-        }}
-        .menu-header {{
-            font-weight: bold;
-            color: #555;
-            padding: 5px 15px;
-            cursor: default !important;
-        }}
-        .menu-disabled {{
-            color: #aaa;
-            cursor: default !important;
-        }}
-    `;
-    document.head.appendChild(style);
+    // Adiciona o event listener para clique direito em toda a página
+    document.addEventListener('contextmenu', showContextMenu);
     </script>
-    
-    <!-- Elemento do menu de contexto -->
-    <div id="custom-context-menu">
-        <ul id="context-menu-list">
-            <!-- Opções serão preenchidas pelo JavaScript -->
-        </ul>
-    </div>
     """
     
     html(js_code, height=0)
 
 def process_context_actions(df, snapshots):
-    """Processa ações do menu de contexto via query parameters (causa rerun)."""
+    """Processa ações do menu de contexto via query parameters."""
     try:
         query_params = st.query_params
         
@@ -552,40 +550,20 @@ def process_context_actions(df, snapshots):
 
 # --- Função para gerenciar edição de dados ---
 
-def handle_data_editor_changes():
+def handle_data_editor_changes(edited_df, original_df, selected_empreendimento):
     """Manipula as mudanças no data_editor e atualiza o DataFrame principal."""
-    if 'data_editor' in st.session_state and st.session_state.data_editor.get('edited_rows'):
-        edited_rows = st.session_state.data_editor['edited_rows']
+    # Compara os DataFrames para detectar mudanças
+    if not edited_df.equals(original_df[original_df['Empreendimento'] == selected_empreendimento]):
+        # Atualiza o DataFrame principal
+        df_updated = original_df.copy()
+        mask = df_updated['Empreendimento'] == selected_empreendimento
+        df_updated.loc[mask, edited_df.columns] = edited_df.values
         
-        # Cria uma cópia do DataFrame para modificar
-        df_updated = st.session_state.df.copy()
-        
-        # Obtém o empreendimento selecionado
-        selected_empreendimento = st.session_state.selected_empreendimento
-        df_filtered = df_updated[df_updated['Empreendimento'] == selected_empreendimento].copy()
-        
-        # Aplica as mudanças
-        for row_index, changes in edited_rows.items():
-            # Encontra o índice real no DataFrame original
-            filtered_indices = df_filtered.index.tolist()
-            if row_index < len(filtered_indices):
-                original_index = filtered_indices[row_index]
-                
-                # Aplica cada mudança
-                for column, new_value in changes.items():
-                    df_updated.loc[original_index, column] = new_value
-        
-        # Atualiza o DataFrame na sessão
         st.session_state.df = df_updated
-        
-        # Marca como não salvo
         st.session_state.unsaved_changes = True
-        
-        # Limpa o estado de edição
-        st.session_state.data_editor = {'edited_rows': {}}
-        
-        # Força rerun para atualizar a interface
-        st.rerun()
+        st.toast("✅ Mudanças aplicadas com sucesso!")
+        return True
+    return False
 
 # --- Aplicação Principal ---
 
@@ -604,8 +582,6 @@ def main():
         st.session_state.show_comparison = False
     if 'selected_empreendimento' not in st.session_state:
         st.session_state.selected_empreendimento = st.session_state.df['Empreendimento'].unique().tolist()[0]
-    if 'data_editor' not in st.session_state:
-        st.session_state.data_editor = {'edited_rows': {}}
         
     # --- Inicialização de Banco de Dados ---
     create_snapshots_table()
@@ -645,10 +621,9 @@ def main():
             if st.button("🗑️ Limpar Locais", use_container_width=True, help="Remove todos os dados locais"):
                 clear_local_data()
                 st.success("Dados locais limpos!")
-                st.rerun() # Rerun para atualizar o estado visual
+                st.rerun()
         
         with col2:
-            # Botão para enviar para AWS
             if st.button("🚀 Enviar para AWS", type="primary", use_container_width=True, 
                                 disabled=not st.session_state.unsaved_changes):
                 with st.spinner("Enviando dados para AWS..."):
@@ -662,7 +637,7 @@ def main():
                     else:
                         st.error(f"❌ Erro ao salvar {error_count} snapshot(s) na AWS.")
                 
-                st.rerun() # Rerun para atualizar o estado visual e limpar o cache de snapshots
+                st.rerun()
         
         st.markdown("---")
         st.markdown("### 📸 Ações Rápidas")
@@ -672,7 +647,7 @@ def main():
                 version_name, saved_locally = take_snapshot(df, selected_empreendimento, save_locally=True)
                 if saved_locally:
                     st.toast(f"✅ {version_name} salvo localmente!")
-                st.rerun() # Rerun para atualizar a lista de snapshots locais
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
         
@@ -681,14 +656,13 @@ def main():
                 version_name, success = take_snapshot(df, selected_empreendimento, save_locally=False)
                 if success:
                     st.toast(f"✅ {version_name} salvo diretamente na AWS!")
-                st.rerun() # Rerun para atualizar a lista de snapshots AWS
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
         
-        # Botão de comparação de períodos
         if st.button("⏳ Comparar Períodos", use_container_width=True):
             st.session_state.show_comparison = not st.session_state.show_comparison
-            st.rerun() # Rerun para mostrar/esconder a seção de comparação
+            st.rerun()
             
         st.markdown("---")
         st.markdown("### 🔧 Gerenciar Snapshots AWS")
@@ -719,25 +693,21 @@ def main():
         if not conn:
             st.info("🔶 Modo offline: usando armazenamento local (sem conexão com AWS)")
         
-        # Tabela editável para simular a área de contexto
-        # Usando um key único baseado no empreendimento para evitar conflitos
-        editor_key = f"data_editor_{selected_empreendimento}"
-        
+        # Tabela editável - SEM key para evitar conflitos
         edited_df = st.data_editor(
-            df_filtered, 
-            key=editor_key,
+            df_filtered,
             use_container_width=True,
             hide_index=True,
             column_order=('ID_Tarefa', 'Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim'),
             num_rows="fixed"
         )
         
-        # Botão para aplicar mudanças manualmente
+        # Botão para aplicar mudanças
         if st.button("💾 Aplicar Mudanças", type="primary"):
-            handle_data_editor_changes()
+            if handle_data_editor_changes(edited_df, df, selected_empreendimento):
+                st.rerun()
             
-        # Mostra instruções
-        st.info("💡 **Instruções:** Edite os dados acima e clique em 'Aplicar Mudanças' para salvar. Use o menu de contexto (botão direito) para criar snapshots.")
+        st.info("💡 **Instruções:** Edite os dados acima e clique em 'Aplicar Mudanças' para salvar. Use o **clique com botão direito** em qualquer lugar da página para acessar o menu de contexto.")
             
     with col2:
         st.subheader("Snapshots AWS")
@@ -763,7 +733,8 @@ def main():
             
     # --- Menu de Contexto ---
     st.markdown("---")
-    st.subheader("Menu de Contexto (Clique com Botão Direito em qualquer lugar)")
+    st.subheader("Menu de Contexto")
+    st.markdown("**Clique com o botão direito do mouse em qualquer lugar da página** para abrir o menu de contexto com opções de snapshot.")
     
     # Prepara dados para o componente de menu de contexto
     local_snapshots_menu = {
@@ -771,6 +742,7 @@ def main():
         if d.get('empreendimento') == selected_empreendimento
     }
     
+    # Renderiza o menu de contexto
     context_menu_component(selected_empreendimento, empreendimento_snapshots, local_snapshots_menu)
     
     # --- Comparação de Períodos ---
