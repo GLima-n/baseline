@@ -34,10 +34,13 @@ def get_db_connection():
     """Tenta estabelecer e cachear a conexão com o banco de dados."""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
-        return conn
+        if conn.is_connected():
+            return conn
+        else:
+            return None
     except Error as e:
-        # Se a conexão falhar, retorna None e o código usará o mock.
-        # Não exibe st.error aqui para evitar poluir a tela se for um ambiente sem DB.
+        return None
+    except Exception as e:
         return None
 
 def create_snapshots_table():
@@ -59,7 +62,6 @@ def create_snapshots_table():
             cursor.execute(create_table_query)
             conn.commit()
         except Error as e:
-            # Exibe o erro apenas se a conexão foi bem-sucedida, mas a query falhou
             if conn:
                 st.error(f"Erro ao criar tabela: {e}")
         finally:
@@ -93,7 +95,6 @@ def load_snapshots():
                 }
             return snapshots
         except Error as e:
-            # Exibe o erro apenas se a conexão foi bem-sucedida, mas a query falhou
             if conn:
                 st.error(f"Erro ao carregar snapshots: {e}")
             return {}
@@ -104,8 +105,25 @@ def load_snapshots():
     else:
         return st.session_state.get('mock_snapshots', {})
 
+def validate_snapshot_data(snapshot_data):
+    """Valida a estrutura dos dados do snapshot."""
+    required_fields = ['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim']
+    
+    if not isinstance(snapshot_data, list):
+        return False
+    
+    for item in snapshot_data:
+        if not all(field in item for field in required_fields):
+            return False
+    
+    return True
+
 def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
     """Salva um snapshot no banco de dados ou mock."""
+    if not validate_snapshot_data(snapshot_data):
+        st.error("Dados do snapshot inválidos")
+        return False
+        
     conn = get_db_connection()
     if conn:
         try:
@@ -278,8 +296,6 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
             df_version = pd.DataFrame(version_data_list)
             
             # Mapeamento de colunas para o formato esperado
-            # Assumindo que as colunas no snapshot_data são 'ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim', 'Real_Inicio', 'Real_Fim'
-            # Usaremos 'P0_Previsto_Inicio' e 'P0_Previsto_Fim' como as colunas de "Planejamento" para a comparação
             df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
             
         df_version['Inicio'] = pd.to_datetime(df_version['Inicio'])
@@ -301,7 +317,7 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
     
     st.dataframe(df_final, use_container_width=True)
 
-# --- Componente Customizado para Menu de Contexto (Sem Recarregamento) ---
+# --- Componente Customizado para Menu de Contexto (Corrigido) ---
 
 def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
     """
@@ -321,287 +337,9 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
     # Serializa os dados para o JavaScript
     all_snapshots_json = json.dumps(all_snapshots)
     
-    # HTML/JS para o menu de contexto
+    # HTML/JS para o menu de contexto - CORRIGIDO
     js_code = f"""
     <script>
-    function openContextMenu(event) {{
-        event.preventDefault(); // Previne o menu de contexto padrão
-        
-        const menu = document.getElementById('custom-context-menu');
-        menu.style.display = 'block';
-        menu.style.left = event.pageX + 'px';
-        menu.style.top = event.pageY + 'px';
-        
-        // Preenche o menu com as opções
-        const list = document.getElementById('context-menu-list');
-        list.innerHTML = ''; // Limpa opções anteriores
-        
-        // Opção 1: Criar Snapshot Local
-        let item1 = document.createElement('li');
-        item1.textContent = '📸 Criar Snapshot Local';
-        item1.onclick = () => sendAction('take_snapshot_local');
-        list.appendChild(item1);
-        
-        // Opção 2: Criar Snapshot AWS
-        let item2 = document.createElement('li');
-        item2.textContent = '🚀 Criar Snapshot AWS';
-        item2.onclick = () => sendAction('take_snapshot_aws');
-        list.appendChild(item2);
-        
-        // Separador
-        list.appendChild(document.createElement('hr'));
-        
-        // Opções de Restauração/Deleção
-        const snapshots = {all_snapshots_json}
-        const snapshotList = {json.dumps(snapshots_list)};
-        
-        if (snapshotList.length > 0) {{
-            let restoreHeader = document.createElement('li');
-            restoreHeader.textContent = '🔄 Restaurar:';
-            restoreHeader.className = 'menu-header';
-            list.appendChild(restoreHeader);
-            
-            snapshotList.forEach(v => {{
-                let version = v; // Garante que 'version' está no escopo do loop
-                let item = document.createElement('li');
-                item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
-                item.onclick = () => sendAction('restore_snapshot', version);
-                list.appendChild(item);
-            }});
-            
-            list.appendChild(document.createElement('hr'));
-            
-            let deleteHeader = document.createElement('li');
-            deleteHeader.textContent = '🗑️ Deletar:';
-            deleteHeader.className = 'menu-header';
-            list.appendChild(deleteHeader);
-            
-            snapshotList.forEach(v => {{
-                let version = v; // Garante que 'version' está no escopo do loop
-                let item = document.createElement('li');
-                item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
-                item.onclick = () => sendAction('delete_snapshot', version);
-                list.appendChild(item);
-            }});
-        }} else {{
-            let item = document.createElement('li');
-            item.textContent = 'Nenhum snapshot disponível';
-            item.className = 'menu-disabled';
-            list.appendChild(item);
-        }}
-    }}
-
-    function sendAction(action, version = null) {{
-        const data = {{
-            action: action,
-            empreendimento: '{empreendimento}',
-            version: version
-        }};
-        
-        // Envia a ação para o Streamlit (usando o mecanismo de comunicação de componentes)
-        const hiddenInput = document.getElementById('context-menu-output');
-        if (hiddenInput) {{
-            hiddenInput.value = JSON.stringify(data);
-            const event = new Event('input', {{ bubbles: true }});
-            hiddenInput.dispatchEvent(event);
-        }}
-        
-        closeContextMenu();
-    }}
-
-    function closeContextMenu() {{
-        document.getElementById('custom-context-menu').style.display = 'none';
-    }}
-
-    // Adiciona o ouvinte de clique direito ao corpo do documento (ou a uma área específica)
-    document.addEventListener('contextmenu', openContextMenu);
-    document.addEventListener('click', closeContextMenu);
-    
-    // Estilos CSS para o menu
-    const style = document.createElement('style');
-    style.innerHTML = `
-        #custom-context-menu {{
-            position: absolute;
-            background-color: #fff;
-            border: 1px solid #ccc;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
-            z-index: 10000;
-            display: none;
-            padding: 5px 0;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-        }}
-        #context-menu-list {{
-            list-style: none;
-            margin: 0;
-            padding: 0;
-        }}
-        #context-menu-list li {{
-            padding: 8px 15px;
-            cursor: pointer;
-        }}
-        #context-menu-list li:hover {{
-            background-color: #f0f0f0;
-        }}
-        #context-menu-list hr {{
-            border: none;
-            border-top: 1px solid #eee;
-            margin: 5px 0;
-        }}
-        .menu-header {{
-            font-weight: bold;
-            color: #555;
-            padding: 5px 15px;
-            cursor: default !important;
-        }}
-        .menu-disabled {{
-            color: #aaa;
-            cursor: default !important;
-        }}
-    `;
-    document.head.appendChild(style);
-    </script>
-    
-    <!-- Elemento do menu de contexto -->
-    <div id="custom-context-menu">
-        <ul id="context-menu-list">
-            <!-- Opções serão preenchidas pelo JavaScript -->
-        </ul>
-    </div>
-    
-    <!-- Input oculto para enviar dados de volta ao Streamlit -->
-    <input type="hidden" id="context-menu-output" value="" />
-    """
-    
-    # O Streamlit component deve retornar o valor do input oculto
-    # Usamos um truque para simular um componente que retorna o valor do input
-    # Isso requer que o usuário interaja com o input, o que é feito pelo JS
-    # Para simplificar, vamos usar o `html` e processar a mudança no input via JS
-    
-    # No Streamlit, o `html` não retorna valor. Precisamos de um componente real
-    # ou usar o `st.experimental_set_query_params` (que causa rerun)
-    # Como o objetivo é EVITAR o rerun, a melhor abordagem é usar um componente
-    # customizado real ou o `st.session_state` com um callback, mas o JS não
-    # pode chamar um callback diretamente sem um componente.
-    
-    # SOLUÇÃO: Usar o `st.text_input` oculto com um callback para simular o componente
-    # e processar a ação SEM `st.rerun()`
-    
-    # 1. Renderiza o HTML/JS
-    html(js_code, height=0)
-    
-    # 2. Cria um input oculto para receber a ação
-    # O JS acima tenta enviar para um input com id 'context-menu-output'
-    # Streamlit não permite criar inputs com IDs arbitrários via `html`
-    # Vamos usar um `st.text_input` e um callback
-    
-    def process_context_action():
-        if st.session_state.context_action_input:
-            try:
-                data = json.loads(st.session_state.context_action_input)
-                action = data.get('action')
-                version = data.get('version')
-                empreendimento_ctx = data.get('empreendimento')
-                
-                if empreendimento_ctx != st.session_state.selected_empreendimento:
-                    st.warning("Ação ignorada: Empreendimento selecionado mudou.")
-                    return
-                
-                if action == 'take_snapshot_local':
-                    version_name, saved = take_snapshot(st.session_state.df, empreendimento_ctx, save_locally=True)
-                    if saved:
-                        st.toast(f"✅ Snapshot '{version_name}' salvo localmente!")
-                    else:
-                        st.toast(f"❌ Erro ao salvar snapshot local.")
-                
-                elif action == 'take_snapshot_aws':
-                    version_name, success = take_snapshot(st.session_state.df, empreendimento_ctx, save_locally=False)
-                    if success:
-                        st.toast(f"✅ Snapshot '{version_name}' salvo na AWS!")
-                    else:
-                        st.toast(f"❌ Erro ao salvar snapshot na AWS.")
-                        
-                elif action == 'restore_snapshot':
-                    # A funcionalidade de restauração é complexa e requer a atualização do DF principal
-                    # Isso GERA um rerun. Vamos manter a lógica de restauração simples por enquanto.
-                    st.toast(f"🔄 Tentativa de restaurar {version} (Funcionalidade em desenvolvimento)")
-                    # Lógica de restauração:
-                    # 1. Carregar dados do snapshot (AWS ou local)
-                    # 2. Atualizar st.session_state.df com os dados
-                    # 3. st.rerun()
-                    
-                elif action == 'delete_snapshot':
-                    if all_snapshots[version]['type'] == 'aws':
-                        if delete_snapshot(empreendimento_ctx, version):
-                            st.toast(f"🗑️ Snapshot AWS '{version}' deletado!")
-                        else:
-                            st.toast(f"❌ Erro ao deletar snapshot AWS.")
-                    elif all_snapshots[version]['type'] == 'local':
-                        # Deletar localmente
-                        if version in st.session_state.local_data:
-                            del st.session_state.local_data[version]
-                            st.session_state.unsaved_changes = any(not data.get('saved_to_aws') for data in st.session_state.local_data.values())
-                            st.toast(f"🗑️ Snapshot Local '{version}' deletado!")
-                        else:
-                            st.toast(f"❌ Erro ao deletar snapshot local.")
-                
-                # Limpa o input para evitar re-execução
-                st.session_state.context_action_input = ""
-                
-            except json.JSONDecodeError:
-                st.error("Erro ao processar ação do menu de contexto.")
-            except Exception as e:
-                st.error(f"Erro na ação do menu de contexto: {e}")
-                
-    # O input oculto deve ser renderizado para que o JS possa interagir com ele
-    # O Streamlit não permite que o JS interaja com elementos criados pelo Streamlit
-    # A solução mais robusta é usar um componente customizado real (mais complexo)
-    # ou voltar ao query_params/rerun (que o usuário quer evitar).
-    
-    # Vamos usar o `st.empty()` para criar um placeholder e injetar o HTML com o input
-    # que o JS pode manipular.
-    
-    # Devido às limitações do Streamlit e a necessidade de evitar `st.rerun()`,
-    # a melhoria de usabilidade é usar `st.toast` e evitar o `st.rerun()`
-    # para as ações que não exigem atualização de dados (salvar/deletar local).
-    # Ações que alteram o DF principal (restaurar) AINDA exigirão `st.rerun()`.
-    
-    # Para o menu de contexto, vamos usar um `st.text_input` com um callback,
-    # e o JS deve ser modificado para interagir com o elemento Streamlit.
-    
-    # Novo JS para interagir com o `st.text_input`
-    js_code_final = f"""
-    <script>
-    // Função para enviar a ação para o Streamlit
-    function sendAction(action, version = null) {{
-        const data = {{
-            action: action,
-            empreendimento: '{empreendimento}',
-            version: version
-        }};
-        
-        // Envia a ação para o Streamlit usando o mecanismo de comunicação de componentes
-        // O Streamlit cria um iframe para o componente. Precisamos de um componente real
-        // ou usar o `st.experimental_set_query_params` (que causa rerun).
-        
-        // Como o objetivo é evitar o rerun, vamos usar o `st.text_input` e um truque
-        // para que o JS no iframe se comunique com o Streamlit pai.
-        
-        // A maneira mais simples e que funciona é usar o `st.experimental_set_query_params`
-        // para ações que alteram o estado global (restaurar, deletar AWS),
-        // e usar `st.toast` sem rerun para ações locais (salvar local).
-        
-        // Para o menu de contexto, o uso de `st.experimental_set_query_params` é a forma
-        // mais robusta de garantir que a ação seja processada no Python.
-        
-        // Voltando à ideia original, mas simplificando o JS para usar `st.query_params`
-        // para garantir a execução da ação no Python.
-        
-        const link = document.createElement('a');
-        link.href = `?context_action=${{action}}&empreendimento={empreendimento}&version=${{version || ''}}&timestamp=${{Date.now()}}`;
-        link.click();
-    }}
-
     function openContextMenu(event) {{
         event.preventDefault();
         
@@ -626,8 +364,8 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
         
         list.appendChild(document.createElement('hr'));
         
-        // Opções de Restauração/Deleção
-        const snapshots = {all_snapshots_json}
+        // Opções de Restauração/Deleção - CORRIGIDO: usando version no loop
+        const snapshots = {all_snapshots_json};
         const snapshotList = {json.dumps(snapshots_list)};
         
         if (snapshotList.length > 0) {{
@@ -636,10 +374,9 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             restoreHeader.className = 'menu-header';
             list.appendChild(restoreHeader);
             
-            snapshotList.forEach(v => {{
-                let version = v; // Garante que 'version' está no escopo do loop
+            snapshotList.forEach(version => {{
                 let item = document.createElement('li');
-                item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
+                item.textContent = `  - ${{version}} (${{snapshots[version].type.toUpperCase()}})`;
                 item.onclick = () => sendAction('restore_snapshot', version);
                 list.appendChild(item);
             }});
@@ -651,10 +388,9 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             deleteHeader.className = 'menu-header';
             list.appendChild(deleteHeader);
             
-            snapshotList.forEach(v => {{
-                let version = v; // Garante que 'version' está no escopo do loop
+            snapshotList.forEach(version => {{
                 let item = document.createElement('li');
-                item.textContent = `  - ${version} (${snapshots[version].type.toUpperCase()})`;
+                item.textContent = `  - ${{version}} (${{snapshots[version].type.toUpperCase()}})`;
                 item.onclick = () => sendAction('delete_snapshot', version);
                 list.appendChild(item);
             }});
@@ -664,6 +400,23 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
             item.className = 'menu-disabled';
             list.appendChild(item);
         }}
+    }}
+
+    function sendAction(action, version = null) {{
+        const data = {{
+            action: action,
+            empreendimento: '{empreendimento}',
+            version: version
+        }};
+        
+        // Usa query parameters para comunicação com Streamlit
+        const params = new URLSearchParams();
+        params.set('context_action', action);
+        params.set('empreendimento', '{empreendimento}');
+        if (version) params.set('version', version);
+        params.set('timestamp', Date.now().toString());
+        
+        window.location.search = params.toString();
     }}
 
     function closeContextMenu() {{
@@ -727,65 +480,75 @@ def context_menu_component(empreendimento, snapshots_aws, snapshots_local):
     </div>
     """
     
-    html(js_code_final, height=350)
+    html(js_code, height=0)
 
 def process_context_actions(df, snapshots):
     """Processa ações do menu de contexto via query parameters (causa rerun)."""
-    query_params = st.query_params
-    
-    action = query_params.get('context_action')
-    empreendimento = query_params.get('empreendimento')
-    version = query_params.get('version')
-    
-    if action and empreendimento:
-        # Limpa os parâmetros
-        st.query_params.clear()
+    try:
+        query_params = st.query_params
         
-        if action == 'take_snapshot_local':
-            try:
+        action = query_params.get('context_action')
+        empreendimento = query_params.get('empreendimento')
+        version = query_params.get('version')
+        
+        if action and empreendimento:
+            # Validação básica
+            if empreendimento not in df['Empreendimento'].unique():
+                st.error(f"Empreendimento '{empreendimento}' não encontrado!")
+                st.query_params.clear()
+                return
+                
+            # Limpa os parâmetros
+            st.query_params.clear()
+            
+            if action == 'take_snapshot_local':
                 version_name, saved = take_snapshot(df, empreendimento, save_locally=True)
                 if saved:
                     st.toast(f"✅ Snapshot '{version_name}' salvo localmente!")
                 else:
                     st.toast(f"❌ Erro ao salvar snapshot local.")
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot local: {e}")
-                
-        elif action == 'take_snapshot_aws':
-            try:
+                    
+            elif action == 'take_snapshot_aws':
                 version_name, success = take_snapshot(df, empreendimento, save_locally=False)
                 if success:
                     st.toast(f"✅ Snapshot '{version_name}' salvo na AWS!")
                 else:
                     st.toast(f"❌ Erro ao salvar snapshot na AWS.")
-            except Exception as e:
-                st.error(f"❌ Erro ao criar snapshot AWS: {e}")
-                
-        elif action == 'restore_snapshot':
-            st.warning(f"🔄 Funcionalidade de restaurar snapshot '{version}' não implementada completamente.")
-            # Lógica de restauração:
-            # 1. Carregar dados do snapshot (AWS ou local)
-            # 2. Atualizar st.session_state.df com os dados
-            # 3. st.rerun()
+                    
+            elif action == 'restore_snapshot':
+                if version:
+                    st.warning(f"🔄 Funcionalidade de restaurar snapshot '{version}' não implementada completamente.")
+                else:
+                    st.error("❌ Versão não especificada para restauração.")
+                    
+            elif action == 'delete_snapshot':
+                if version:
+                    # Verifica se existe na AWS
+                    if version in snapshots.get(empreendimento, {}):
+                        if delete_snapshot(empreendimento, version):
+                            st.toast(f"🗑️ Snapshot AWS '{version}' deletado!")
+                        else:
+                            st.toast(f"❌ Erro ao deletar snapshot AWS.")
+                    else:
+                        # Verifica se existe localmente
+                        local_data = st.session_state.get('local_data', {})
+                        if version in local_data and local_data[version].get('empreendimento') == empreendimento:
+                            del st.session_state.local_data[version]
+                            st.session_state.unsaved_changes = any(
+                                not data.get('saved_to_aws') 
+                                for data in st.session_state.local_data.values()
+                            )
+                            st.toast(f"🗑️ Snapshot Local '{version}' deletado!")
+                        else:
+                            st.toast(f"❌ Snapshot '{version}' não encontrado.")
+                else:
+                    st.error("❌ Versão não especificada para deleção.")
             
-        elif action == 'delete_snapshot':
-            if version in snapshots.get(empreendimento, {}):
-                if delete_snapshot(empreendimento, version):
-                    st.toast(f"🗑️ Snapshot AWS '{version}' deletado!")
-                else:
-                    st.toast(f"❌ Erro ao deletar snapshot AWS.")
-            else:
-                # Deletar localmente
-                if version in st.session_state.get('local_data', {}):
-                    del st.session_state.local_data[version]
-                    st.session_state.unsaved_changes = any(not data.get('saved_to_aws') for data in st.session_state.local_data.values())
-                    st.toast(f"🗑️ Snapshot Local '{version}' deletado!")
-                else:
-                    st.toast(f"❌ Snapshot '{version}' não encontrado.")
-        
-        # Um rerun é necessário após a limpeza dos query params para garantir que a página
-        # seja renderizada sem os parâmetros de ação, evitando loops.
-        st.rerun()
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"❌ Erro ao processar ação do menu de contexto: {e}")
+        st.query_params.clear()
 
 # --- Aplicação Principal ---
 
@@ -804,6 +567,8 @@ def main():
         st.session_state.show_comparison = False
     if 'selected_empreendimento' not in st.session_state:
         st.session_state.selected_empreendimento = st.session_state.df['Empreendimento'].unique().tolist()[0]
+    if 'data_editor' not in st.session_state:
+        st.session_state.data_editor = {}
         
     # --- Inicialização de Banco de Dados ---
     create_snapshots_table()
