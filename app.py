@@ -34,20 +34,20 @@ def get_db_connection():
     except Error as e:
         return None
 
-def create_snapshots_table():
+def create_baselines_table():
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
             create_table_query = """
-            CREATE TABLE IF NOT EXISTS snapshots (
+            CREATE TABLE IF NOT EXISTS baselines (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 empreendimento VARCHAR(255) NOT NULL,
                 version_name VARCHAR(255) NOT NULL,
-                snapshot_data JSON NOT NULL,
+                baseline_data JSON NOT NULL,
                 created_date VARCHAR(50) NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY unique_snapshot (empreendimento, version_name)
+                UNIQUE KEY unique_baseline (empreendimento, version_name)
             )
             """
             cursor.execute(create_table_query)
@@ -59,88 +59,88 @@ def create_snapshots_table():
                 cursor.close()
                 conn.close()
     else:
-        if 'mock_snapshots' not in st.session_state:
-            st.session_state.mock_snapshots = {}
+        if 'mock_baselines' not in st.session_state:
+            st.session_state.mock_baselines = {}
 
-def load_snapshots():
+def load_baselines():
     conn = get_db_connection()
     if conn:
-        snapshots = {}
+        baselines = {}
         try:
             cursor = conn.cursor(dictionary=True)
-            query = "SELECT empreendimento, version_name, snapshot_data, created_date FROM snapshots ORDER BY created_at DESC"
+            query = "SELECT empreendimento, version_name, baseline_data, created_date FROM baselines ORDER BY created_at DESC"
             cursor.execute(query)
             results = cursor.fetchall()
             for row in results:
                 empreendimento = row['empreendimento']
                 version_name = row['version_name']
-                if empreendimento not in snapshots:
-                    snapshots[empreendimento] = {}
-                snapshot_data = json.loads(row['snapshot_data'])
-                snapshots[empreendimento][version_name] = {
+                if empreendimento not in baselines:
+                    baselines[empreendimento] = {}
+                baseline_data = json.loads(row['baseline_data'])
+                baselines[empreendimento][version_name] = {
                     "date": row['created_date'],
-                    "data": snapshot_data
+                    "data": baseline_data
                 }
-            return snapshots
+            return baselines
         except Error as e:
-            st.error(f"Erro ao carregar snapshots: {e}")
+            st.error(f"Erro ao carregar linhas de base: {e}")
             return {}
         finally:
             if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
-        return st.session_state.mock_snapshots
+        return st.session_state.mock_baselines
 
-def save_snapshot(empreendimento, version_name, snapshot_data, created_date):
+def save_baseline(empreendimento, version_name, baseline_data, created_date):
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            snapshot_json = json.dumps(snapshot_data)
+            baseline_json = json.dumps(baseline_data)
             insert_query = """
-            INSERT INTO snapshots (empreendimento, version_name, snapshot_data, created_date)
+            INSERT INTO baselines (empreendimento, version_name, baseline_data, created_date)
             VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE snapshot_data = VALUES(snapshot_data), created_date = VALUES(created_date)
+            ON DUPLICATE KEY UPDATE baseline_data = VALUES(baseline_data), created_date = VALUES(created_date)
             """
-            cursor.execute(insert_query, (empreendimento, version_name, snapshot_json, created_date))
+            cursor.execute(insert_query, (empreendimento, version_name, baseline_json, created_date))
             conn.commit()
             return True
         except Error as e:
-            st.error(f"Erro ao salvar snapshot: {e}")
+            st.error(f"Erro ao salvar linha de base: {e}")
             return False
         finally:
             if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
-        if empreendimento not in st.session_state.mock_snapshots:
-            st.session_state.mock_snapshots[empreendimento] = {}
-        st.session_state.mock_snapshots[empreendimento][version_name] = {
+        if empreendimento not in st.session_state.mock_baselines:
+            st.session_state.mock_baselines[empreendimento] = {}
+        st.session_state.mock_baselines[empreendimento][version_name] = {
             "date": created_date,
-            "data": snapshot_data
+            "data": baseline_data
         }
         return True
 
-def delete_snapshot(empreendimento, version_name):
+def delete_baseline(empreendimento, version_name):
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            delete_query = "DELETE FROM snapshots WHERE empreendimento = %s AND version_name = %s"
+            delete_query = "DELETE FROM baselines WHERE empreendimento = %s AND version_name = %s"
             cursor.execute(delete_query, (empreendimento, version_name))
             conn.commit()
             return cursor.rowcount > 0
         except Error as e:
-            st.error(f"Erro ao deletar snapshot: {e}")
+            st.error(f"Erro ao deletar linha de base: {e}")
             return False
         finally:
             if conn.is_connected():
                 cursor.close()
                 conn.close()
     else:
-        if empreendimento in st.session_state.mock_snapshots and version_name in st.session_state.mock_snapshots[empreendimento]:
-            del st.session_state.mock_snapshots[empreendimento][version_name]
+        if empreendimento in st.session_state.mock_baselines and version_name in st.session_state.mock_baselines[empreendimento]:
+            del st.session_state.mock_baselines[empreendimento][version_name]
             return True
         return False
 
@@ -161,14 +161,14 @@ def create_mock_dataframe():
     df['Previsto_Fim'] = df['P0_Previsto_Fim']
     return df
 
-# --- Lógica de Snapshot ---
+# --- Lógica de Linha de Base ---
 
-def take_snapshot(df, empreendimento):
+def take_baseline(df, empreendimento):
     df_empreendimento = df[df['Empreendimento'] == empreendimento].copy()
     
-    existing_snapshots = load_snapshots()
-    empreendimento_snapshots = existing_snapshots.get(empreendimento, {})
-    existing_versions = [k for k in empreendimento_snapshots.keys() if k.startswith('P') and k.split('-')[0][1:].isdigit()]
+    existing_baselines = load_baselines()
+    empreendimento_baselines = existing_baselines.get(empreendimento, {})
+    existing_versions = [k for k in empreendimento_baselines.keys() if k.startswith('P') and k.split('-')[0][1:].isdigit()]
     
     next_n = 1
     if existing_versions:
@@ -187,30 +187,30 @@ def take_snapshot(df, empreendimento):
     current_date_str = datetime.now().strftime("%d/%m/%Y")
     version_name = f"{version_prefix}-({current_date_str})"
     
-    df_snapshot = df_empreendimento[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
-    df_snapshot['Real_Inicio'] = df_snapshot['Real_Inicio'].dt.strftime('%Y-%m-%d')
-    df_snapshot['Real_Fim'] = df_snapshot['Real_Fim'].dt.strftime('%Y-%m-%d')
+    df_baseline = df_empreendimento[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
+    df_baseline['Real_Inicio'] = df_baseline['Real_Inicio'].dt.strftime('%Y-%m-%d')
+    df_baseline['Real_Fim'] = df_baseline['Real_Fim'].dt.strftime('%Y-%m-%d')
     
-    snapshot_data = df_snapshot.rename(
+    baseline_data = df_baseline.rename(
         columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}
     ).to_dict('records')
 
-    success = save_snapshot(empreendimento, version_name, snapshot_data, current_date_str)
+    success = save_baseline(empreendimento, version_name, baseline_data, current_date_str)
     
     if success:
-        # Marcar snapshot como não enviado para AWS
-        if 'unsent_snapshots' not in st.session_state:
-            st.session_state.unsent_snapshots = {}
+        # Marcar linha de base como não enviada para AWS
+        if 'unsent_baselines' not in st.session_state:
+            st.session_state.unsent_baselines = {}
         
-        if empreendimento not in st.session_state.unsent_snapshots:
-            st.session_state.unsent_snapshots[empreendimento] = []
+        if empreendimento not in st.session_state.unsent_baselines:
+            st.session_state.unsent_baselines[empreendimento] = []
         
-        if version_name not in st.session_state.unsent_snapshots[empreendimento]:
-            st.session_state.unsent_snapshots[empreendimento].append(version_name)
+        if version_name not in st.session_state.unsent_baselines[empreendimento]:
+            st.session_state.unsent_baselines[empreendimento].append(version_name)
         
         return version_name
     else:
-        raise Exception("Falha ao salvar snapshot no banco de dados")
+        raise Exception("Falha ao salvar linha de base no banco de dados")
 
 # --- Função para enviar dados para AWS ---
 
@@ -222,15 +222,15 @@ def send_to_aws(empreendimento, version_name):
         time.sleep(1)  # Simular delay de rede
         
         # Remover da lista de não enviados
-        if ('unsent_snapshots' in st.session_state and 
-            empreendimento in st.session_state.unsent_snapshots and 
-            version_name in st.session_state.unsent_snapshots[empreendimento]):
+        if ('unsent_baselines' in st.session_state and 
+            empreendimento in st.session_state.unsent_baselines and 
+            version_name in st.session_state.unsent_baselines[empreendimento]):
             
-            st.session_state.unsent_snapshots[empreendimento].remove(version_name)
+            st.session_state.unsent_baselines[empreendimento].remove(version_name)
             
-            # Se não há mais snapshots não enviados para este empreendimento, remover a entrada
-            if not st.session_state.unsent_snapshots[empreendimento]:
-                del st.session_state.unsent_snapshots[empreendimento]
+            # Se não há mais linhas de base não enviadas para este empreendimento, remover a entrada
+            if not st.session_state.unsent_baselines[empreendimento]:
+                del st.session_state.unsent_baselines[empreendimento]
         
         return True
     except Exception as e:
@@ -250,15 +250,15 @@ def process_context_menu_actions():
         # Limpar os parâmetros para evitar execução múltipla
         st.query_params.clear()
         
-        if action == 'take_snapshot':
+        if action == 'take_baseline':
             try:
-                version_name = take_snapshot(st.session_state.df, empreendimento)
+                version_name = take_baseline(st.session_state.df, empreendimento)
                 # Usar session_state para mostrar mensagem sem recarregar a página
                 st.session_state.context_menu_success = f"✅ {version_name} criado via menu de contexto!"
                 st.session_state.show_context_success = True
                 st.session_state.context_menu_trigger = True
             except Exception as e:
-                st.session_state.context_menu_error = f"❌ Erro ao criar snapshot: {e}"
+                st.session_state.context_menu_error = f"❌ Erro ao criar linha de base: {e}"
                 st.session_state.show_context_error = True
 
 # --- Menu de Contexto SEM RECARREGAMENTO VISÍVEL ---
@@ -324,7 +324,7 @@ def create_context_menu_component(selected_empreendimento):
         margin: 20px 0;
         user-select: none;
     }}
-    #snapshot-status {{
+    #baseline-status {{
         margin-top: 10px;
         padding: 10px;
         border-radius: 5px;
@@ -380,16 +380,16 @@ def create_context_menu_component(selected_empreendimento):
     <div id="gantt-area">
         <div style="text-align: center;">
             <h3>Área do Gráfico de Gantt</h3>
-            <p>Clique com o botão direito para abrir o menu de snapshot</p>
+            <p>Clique com o botão direito para abrir o menu de linha de base</p>
         </div>
     </div>
 
-    <div id="snapshot-status"></div>
+    <div id="baseline-status"></div>
 
     <!-- Overlay de loading -->
     <div id="loading-overlay" class="loading-overlay">
         <div class="loading-spinner">
-            <h3>🔄 Criando Snapshot</h3>
+            <h3>🔄 Criando Linha de Base</h3>
             <p>Por favor, aguarde...</p>
         </div>
     </div>
@@ -398,17 +398,17 @@ def create_context_menu_component(selected_empreendimento):
     <iframe id="hidden-iframe" name="hidden-iframe"></iframe>
 
     <div id="context-menu">
-        <div class="context-menu-item" id="take-snapshot">📸 Tirar Snapshot</div>
-        <div class="context-menu-item" id="restore-snapshot">🔄 Restaurar Snapshot</div>
-        <div class="context-menu-item" id="delete-snapshot">🗑️ Deletar Snapshot</div>
+        <div class="context-menu-item" id="take-baseline">📸 Criar Linha de Base</div>
+        <div class="context-menu-item" id="restore-baseline">🔄 Restaurar Linha de Base</div>
+        <div class="context-menu-item" id="delete-baseline">🗑️ Deletar Linha de Base</div>
     </div>
 
     <script>
     // Elementos
     const ganttArea = document.getElementById('gantt-area');
     const contextMenu = document.getElementById('context-menu');
-    const statusDiv = document.getElementById('snapshot-status');
-    const takeSnapshotBtn = document.getElementById('take-snapshot');
+    const statusDiv = document.getElementById('baseline-status');
+    const takeBaselineBtn = document.getElementById('take-baseline');
     const loadingOverlay = document.getElementById('loading-overlay');
     const hiddenIframe = document.getElementById('hidden-iframe');
     
@@ -446,14 +446,14 @@ def create_context_menu_component(selected_empreendimento):
         }}, 3000);
     }}
     
-    // Função para criar snapshot via iframe invisível
-    function executeTakeSnapshot() {{
-        showStatus('🔄 Criando snapshot...', 'status-creating');
+    // Função para criar linha de base via iframe invisível
+    function executeTakeBaseline() {{
+        showStatus('🔄 Criando linha de base...', 'status-creating');
         showLoading();
         
         // Criar URL com parâmetros para o Streamlit processar
         const timestamp = new Date().getTime();
-        const url = `?context_action=take_snapshot&empreendimento={selected_empreendimento}&t=${{timestamp}}`;
+        const url = `?context_action=take_baseline&empreendimento={selected_empreendimento}&t=${{timestamp}}`;
         
         // Usar iframe invisível para carregar a URL
         hiddenIframe.src = url;
@@ -461,12 +461,12 @@ def create_context_menu_component(selected_empreendimento):
         // Quando o iframe terminar de carregar
         hiddenIframe.onload = function() {{
             hideLoading();
-            showStatus('✅ Snapshot criado! Verifique a barra lateral para enviar para AWS.', 'status-success');
+            showStatus('✅ Linha de base criada! Verifique a barra lateral para enviar para AWS.', 'status-success');
             
             // Forçar uma atualização suave da sidebar após 1 segundo
             setTimeout(() => {{
                 // Disparar um evento customizado para atualizar a interface
-                const event = new Event('snapshotCreated');
+                const event = new Event('baselineCreated');
                 document.dispatchEvent(event);
             }}, 1000);
         }};
@@ -483,26 +483,26 @@ def create_context_menu_component(selected_empreendimento):
         }});
     }}
     
-    // Event listener para o botão de tirar snapshot
-    if (takeSnapshotBtn) {{
-        takeSnapshotBtn.addEventListener('click', function() {{
-            executeTakeSnapshot();
+    // Event listener para o botão de criar linha de base
+    if (takeBaselineBtn) {{
+        takeBaselineBtn.addEventListener('click', function() {{
+            executeTakeBaseline();
         }});
     }}
     
     // Event listeners para outros botões (placeholder)
-    const restoreSnapshotBtn = document.getElementById('restore-snapshot');
-    const deleteSnapshotBtn = document.getElementById('delete-snapshot');
+    const restoreBaselineBtn = document.getElementById('restore-baseline');
+    const deleteBaselineBtn = document.getElementById('delete-baseline');
     
-    if (restoreSnapshotBtn) {{
-        restoreSnapshotBtn.addEventListener('click', function() {{
+    if (restoreBaselineBtn) {{
+        restoreBaselineBtn.addEventListener('click', function() {{
             showStatus('🔄 Funcionalidade em desenvolvimento...', 'status-creating');
             hideContextMenu();
         }});
     }}
     
-    if (deleteSnapshotBtn) {{
-        deleteSnapshotBtn.addEventListener('click', function() {{
+    if (deleteBaselineBtn) {{
+        deleteBaselineBtn.addEventListener('click', function() {{
             showStatus('🗑️ Funcionalidade em desenvolvimento...', 'status-creating');
             hideContextMenu();
         }});
@@ -529,9 +529,9 @@ def create_context_menu_component(selected_empreendimento):
         }}
     }}, true);
     
-    // Atualizar interface quando snapshot for criado
-    document.addEventListener('snapshotCreated', function() {{
-        console.log('Snapshot criado - interface pode ser atualizada');
+    // Atualizar interface quando linha de base for criada
+    document.addEventListener('baselineCreated', function() {{
+        console.log('Linha de base criada - interface pode ser atualizada');
         // Aqui você pode adicionar lógica para atualizar elementos específicos
     }});
     </script>
@@ -542,11 +542,11 @@ def create_context_menu_component(selected_empreendimento):
 
 # --- Visualização de Comparação de Período ---
 
-def display_period_comparison(df_filtered, empreendimento_snapshots):
+def display_period_comparison(df_filtered, empreendimento_baselines):
     st.subheader(f"⏳ Comparação de Período - {df_filtered['Empreendimento'].iloc[0]}")
     
     version_options = ["P0 (Planejamento Original)"]
-    version_options.extend(sorted(empreendimento_snapshots.keys()))
+    version_options.extend(sorted(empreendimento_baselines.keys()))
     
     col1, col2 = st.columns(2)
     with col1:
@@ -564,7 +564,7 @@ def display_period_comparison(df_filtered, empreendimento_snapshots):
             df_version = df_filtered[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim']].copy()
             df_version = df_version.rename(columns={'P0_Previsto_Inicio': 'Inicio', 'P0_Previsto_Fim': 'Fim'})
         else:
-            version_data_list = empreendimento_snapshots[version_name]['data']
+            version_data_list = empreendimento_baselines[version_name]['data']
             df_version = pd.DataFrame(version_data_list)
             version_prefix = version_name.split('-')[0]
             col_inicio = f'{version_prefix}_Previsto_Inicio'
@@ -599,8 +599,8 @@ def main():
     # Inicialização do session_state
     if 'df' not in st.session_state:
         st.session_state.df = create_mock_dataframe()
-    if 'unsent_snapshots' not in st.session_state:
-        st.session_state.unsent_snapshots = {}
+    if 'unsent_baselines' not in st.session_state:
+        st.session_state.unsent_baselines = {}
     if 'show_comparison' not in st.session_state:
         st.session_state.show_comparison = False
     if 'show_context_success' not in st.session_state:
@@ -611,14 +611,14 @@ def main():
         st.session_state.context_menu_trigger = False
     
     # Inicialização do banco
-    create_snapshots_table()
+    create_baselines_table()
     
     # Processar ações do menu de contexto PRIMEIRO
     process_context_menu_actions()
     
     # Dados
     df = st.session_state.df
-    snapshots = load_snapshots()
+    baselines = load_baselines()
     
     # Sidebar
     with st.sidebar:
@@ -631,9 +631,9 @@ def main():
         st.markdown("---")
         st.markdown("### 📸 Ações Rápidas")
         
-        if st.button("📸 Criar Snapshot", use_container_width=True, key="sidebar_snapshot"):
+        if st.button("📸 Criar Linha de Base", use_container_width=True, key="sidebar_baseline"):
             try:
-                version_name = take_snapshot(df, selected_empreendimento)
+                version_name = take_baseline(df, selected_empreendimento)
                 st.success(f"✅ {version_name} criado!")
                 st.rerun()
             except Exception as e:
@@ -645,15 +645,15 @@ def main():
         
         # Seção de envio para AWS
         st.markdown("---")
-        st.markdown("### ☁️ Snapshots para Enviar")
+        st.markdown("### ☁️ Linhas de Base para Enviar")
         
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        unsent_snapshots = st.session_state.unsent_snapshots.get(selected_empreendimento, [])
+        empreendimento_baselines = baselines.get(selected_empreendimento, {})
+        unsent_baselines = st.session_state.unsent_baselines.get(selected_empreendimento, [])
         
-        if unsent_snapshots:
-            st.info(f"📋 {len(unsent_snapshots)} snapshot(s) aguardando envio para AWS")
+        if unsent_baselines:
+            st.info(f"📋 {len(unsent_baselines)} linha(s) de base aguardando envio para AWS")
             
-            for version_name in unsent_snapshots:
+            for version_name in unsent_baselines:
                 col1, col2, col3 = st.columns([3, 1, 1])
                 with col1:
                     st.write(f"`{version_name}`")
@@ -664,22 +664,22 @@ def main():
                             st.rerun()
                 with col3:
                     if st.button("🗑️", key=f"del_{version_name}"):
-                        if delete_snapshot(selected_empreendimento, version_name):
+                        if delete_baseline(selected_empreendimento, version_name):
                             # Remover da lista de não enviados também
-                            if version_name in st.session_state.unsent_snapshots.get(selected_empreendimento, []):
-                                st.session_state.unsent_snapshots[selected_empreendimento].remove(version_name)
+                            if version_name in st.session_state.unsent_baselines.get(selected_empreendimento, []):
+                                st.session_state.unsent_baselines[selected_empreendimento].remove(version_name)
                             st.success(f"✅ {version_name} deletado!")
                             st.rerun()
         else:
-            st.info("📭 Nenhum snapshot aguardando envio")
+            st.info("📭 Nenhuma linha de base aguardando envio")
         
-        # Gerenciamento de todos os snapshots
+        # Gerenciamento de todas as linhas de base
         st.markdown("---")
-        st.markdown("### 💾 Todos os Snapshots")
+        st.markdown("### 💾 Todas as Linhas de Base")
         
-        if empreendimento_snapshots:
-            for version_name in sorted(empreendimento_snapshots.keys()):
-                is_unsent = version_name in unsent_snapshots
+        if empreendimento_baselines:
+            for version_name in sorted(empreendimento_baselines.keys()):
+                is_unsent = version_name in unsent_baselines
                 
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -689,14 +689,14 @@ def main():
                         st.write(f"`{version_name}` ✅")
                 with col2:
                     if st.button("🗑️", key=f"del_all_{version_name}"):
-                        if delete_snapshot(selected_empreendimento, version_name):
+                        if delete_baseline(selected_empreendimento, version_name):
                             # Remover da lista de não enviados também
-                            if version_name in st.session_state.unsent_snapshots.get(selected_empreendimento, []):
-                                st.session_state.unsent_snapshots[selected_empreendimento].remove(version_name)
+                            if version_name in st.session_state.unsent_baselines.get(selected_empreendimento, []):
+                                st.session_state.unsent_baselines[selected_empreendimento].remove(version_name)
                             st.success(f"✅ {version_name} deletado!")
                             st.rerun()
         else:
-            st.info("Nenhum snapshot criado")
+            st.info("Nenhuma linha de base criada")
     
     # Visualização principal
     col1, col2 = st.columns([2, 1])
@@ -706,18 +706,18 @@ def main():
         st.dataframe(df_filtered, use_container_width=True)
     
     with col2:
-        st.subheader("Snapshots")
-        empreendimento_snapshots = snapshots.get(selected_empreendimento, {})
-        unsent_snapshots = st.session_state.unsent_snapshots.get(selected_empreendimento, [])
+        st.subheader("Linhas de Base")
+        empreendimento_baselines = baselines.get(selected_empreendimento, {})
+        unsent_baselines = st.session_state.unsent_baselines.get(selected_empreendimento, [])
         
-        if empreendimento_snapshots:
-            for version in sorted(empreendimento_snapshots.keys()):
-                if version in unsent_snapshots:
+        if empreendimento_baselines:
+            for version in sorted(empreendimento_baselines.keys()):
+                if version in unsent_baselines:
                     st.write(f"• {version} ⏳")
                 else:
                     st.write(f"• {version} ✅")
         else:
-            st.info("Nenhum snapshot")
+            st.info("Nenhuma linha de base")
     
     # Menu de contexto
     st.markdown("---")
@@ -729,12 +729,12 @@ def main():
     # Comparação de períodos
     if st.session_state.show_comparison:
         st.markdown("---")
-        display_period_comparison(df_filtered, empreendimento_snapshots)
+        display_period_comparison(df_filtered, empreendimento_baselines)
     
-    # Status de snapshots não enviados
-    total_unsent = sum(len(snapshots) for snapshots in st.session_state.unsent_snapshots.values())
+    # Status de linhas de base não enviadas
+    total_unsent = sum(len(baselines) for baselines in st.session_state.unsent_baselines.values())
     if total_unsent > 0:
-        st.warning(f"⚠️ Você tem {total_unsent} snapshot(s) não enviados para AWS. Envie-os pela barra lateral.")
+        st.warning(f"⚠️ Você tem {total_unsent} linha(s) de base não enviadas para AWS. Envie-as pela barra lateral.")
 
 if __name__ == "__main__":
     main()
