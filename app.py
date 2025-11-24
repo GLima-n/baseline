@@ -166,6 +166,21 @@ def create_mock_dataframe():
 def take_baseline(df, empreendimento):
     df_empreendimento = df[df['Empreendimento'] == empreendimento].copy()
     
+    # ✅ MODIFICAÇÃO: Atualizar P0_Previsto com os valores REAIS atuais
+    df_empreendimento['P0_Previsto_Inicio'] = df_empreendimento['Real_Inicio']
+    df_empreendimento['P0_Previsto_Fim'] = df_empreendimento['Real_Fim']
+    
+    # ✅ MODIFICAÇÃO: Atualizar também as colunas Previsto_Inicio/Previsto_Fim
+    df_empreendimento['Previsto_Inicio'] = df_empreendimento['Real_Inicio']
+    df_empreendimento['Previsto_Fim'] = df_empreendimento['Real_Fim']
+    
+    # ✅ MODIFICAÇÃO: Atualizar o DataFrame original na session_state
+    mask = df['Empreendimento'] == empreendimento
+    df.loc[mask, 'P0_Previsto_Inicio'] = df_empreendimento['Real_Inicio'].values
+    df.loc[mask, 'P0_Previsto_Fim'] = df_empreendimento['Real_Fim'].values
+    df.loc[mask, 'Previsto_Inicio'] = df_empreendimento['Real_Inicio'].values
+    df.loc[mask, 'Previsto_Fim'] = df_empreendimento['Real_Fim'].values
+    
     existing_baselines = load_baselines()
     empreendimento_baselines = existing_baselines.get(empreendimento, {})
     existing_versions = [k for k in empreendimento_baselines.keys() if k.startswith('P') and k.split('-')[0][1:].isdigit()]
@@ -187,12 +202,14 @@ def take_baseline(df, empreendimento):
     current_date_str = datetime.now().strftime("%d/%m/%Y")
     version_name = f"{version_prefix}-({current_date_str})"
     
-    df_baseline = df_empreendimento[['ID_Tarefa', 'Real_Inicio', 'Real_Fim']].copy()
-    df_baseline['Real_Inicio'] = df_baseline['Real_Inicio'].dt.strftime('%Y-%m-%d')
-    df_baseline['Real_Fim'] = df_baseline['Real_Fim'].dt.strftime('%Y-%m-%d')
+    # Criar baseline com os dados atualizados
+    df_baseline = df_empreendimento[['ID_Tarefa', 'P0_Previsto_Inicio', 'P0_Previsto_Fim']].copy()
+    df_baseline['P0_Previsto_Inicio'] = df_baseline['P0_Previsto_Inicio'].dt.strftime('%Y-%m-%d')
+    df_baseline['P0_Previsto_Fim'] = df_baseline['P0_Previsto_Fim'].dt.strftime('%Y-%m-%d')
     
     baseline_data = df_baseline.rename(
-        columns={'Real_Inicio': f'{version_prefix}_Previsto_Inicio', 'Real_Fim': f'{version_prefix}_Previsto_Fim'}
+        columns={'P0_Previsto_Inicio': f'{version_prefix}_Previsto_Inicio', 
+                 'P0_Previsto_Fim': f'{version_prefix}_Previsto_Fim'}
     ).to_dict('records')
 
     success = save_baseline(empreendimento, version_name, baseline_data, current_date_str)
